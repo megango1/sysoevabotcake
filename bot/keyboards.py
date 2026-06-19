@@ -9,7 +9,7 @@ def main_menu_keyboard(has_access: bool) -> ReplyKeyboardMarkup:
         buttons = [
             [KeyboardButton(label) for label in list(SECTION_LABELS.values())[:2]],
             [KeyboardButton(label) for label in list(SECTION_LABELS.values())[2:]],
-            [KeyboardButton("📩 Зв'язок з автором")],
+            [KeyboardButton("📅 Моя підписка"), KeyboardButton("📩 Зв'язок з автором")],
         ]
     else:
         buttons = [

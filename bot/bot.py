@@ -26,7 +26,7 @@ SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
 from database import (
     init_db, upsert_user, check_access,
-    grant_access, revoke_access, get_all_users, get_stats, ADMIN_ID, ADMIN_IDS,
+    grant_access, revoke_access, get_all_users, get_stats, get_access_until, ADMIN_ID, ADMIN_IDS,
     add_section, get_subsections, get_subsection,
     update_section, delete_section, get_all_sections,
 )
@@ -553,6 +553,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
             )
+    elif text == "📅 Моя підписка":
+        from datetime import timezone as _tz
+        access_until = await get_access_until(user.id)
+        if access_until is None:
+            msg = "📅 <b>Моя підписка</b>\n\n❌ Термін підписки не встановлено."
+        else:
+            from datetime import datetime as _dt
+            now = _dt.now(tz=_tz.utc)
+            days_left = (access_until - now).days
+            date_str = access_until.strftime("%d.%m.%Y")
+            if days_left > 0:
+                msg = (
+                    f"📅 <b>Моя підписка</b>\n\n"
+                    f"✅ Активна до: <b>{date_str}</b>\n"
+                    f"⏳ Залишилось днів: <b>{days_left}</b>"
+                )
+            else:
+                msg = (
+                    f"📅 <b>Моя підписка</b>\n\n"
+                    f"❌ Підписка закінчилась: <b>{date_str}</b>"
+                )
+        await update.message.reply_html(msg, reply_markup=main_menu_keyboard(True))
     elif text == "📩 Зв'язок з автором":
         await update.message.reply_html(TEXTS["contact_author"], reply_markup=main_menu_keyboard(True))
     else:

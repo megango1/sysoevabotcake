@@ -100,6 +100,24 @@ async def grant_access(user_id: int, days: int = 30) -> None:
     ).execute())
 
 
+async def get_access_until(user_id: int):
+    db = get_db()
+    res = await _run(lambda: db.table("users")
+        .select("access_until")
+        .eq("user_id", user_id)
+        .single()
+        .execute())
+    if not res.data:
+        return None
+    val = res.data.get("access_until")
+    if not val:
+        return None
+    dt = datetime.fromisoformat(val)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def revoke_access(user_id: int) -> None:
     db = get_db()
     await _run(lambda: db.table("users")
