@@ -1,8 +1,11 @@
 import os
+import warnings
 import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+warnings.filterwarnings("ignore", message=".*per_message=False.*", category=UserWarning)
 
 from telegram import Update
 from telegram.ext import (
