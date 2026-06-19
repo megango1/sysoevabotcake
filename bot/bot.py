@@ -26,17 +26,17 @@ SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
 from database import (
     init_db, upsert_user, check_access,
-    grant_access, revoke_access, get_all_users, ADMIN_ID,
+    grant_access, revoke_access, get_all_users, get_stats, ADMIN_ID,
     add_section, get_subsections, get_subsection,
     delete_section, get_all_sections,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
-    contact_keyboard, admin_main_keyboard, admin_users_keyboard,
-    admin_sections_list_keyboard, subsections_keyboard,
-    choose_parent_keyboard, skip_keyboard,
+    contact_keyboard, cakes_submenu_keyboard, admin_main_keyboard,
+    admin_users_keyboard, admin_sections_list_keyboard,
+    subsections_keyboard, choose_parent_keyboard, skip_keyboard,
 )
-from content import TEXTS, SECTION_LABELS, SECTION_KEYS
+from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -107,7 +107,7 @@ async def add_chose_parent(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     parent_key = data.replace("add_to_", "")
     context.user_data["new_section"] = {"parent_key": parent_key}
-    label = SECTION_LABELS.get(parent_key, parent_key)
+    label = ALL_SECTION_LABELS.get(parent_key, parent_key)
     await query.edit_message_text(
         f"✅ Розділ: <b>{label}</b>\n\n✏️ Напиши <b>назву кнопки</b> (наприклад: Медовик):",
         parse_mode="HTML",
@@ -197,7 +197,7 @@ async def _save_section(
 ) -> int:
     data = context.user_data.pop("new_section", {})
     parent_key = data.get("parent_key", "")
-    label = SECTION_LABELS.get(parent_key, parent_key)
+    label = ALL_SECTION_LABELS.get(parent_key, parent_key)
     emoji = data.get("emoji", "")
     title = data.get("title", "")
 
@@ -248,7 +248,7 @@ async def list_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for s in sections:
         if s["parent_key"] != current_key:
             current_key = s["parent_key"]
-            lines.append(f"\n{SECTION_LABELS.get(current_key, current_key)}:")
+            lines.append(f"\n{ALL_SECTION_LABELS.get(current_key, current_key)}:")
         active = "✅" if s["is_active"] else "❌"
         emoji = s.get("emoji", "")
         lines.append(f"  {active} <code>{s['id']}</code> — {emoji} {s['title']}")
@@ -346,7 +346,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    if text in SECTION_KEYS:
+    if text == "📖 Рецепти":
+        await update.message.reply_html(
+            "📖 <b>Рецепти</b>\n\nОбери підкатегорію:",
+            reply_markup=cakes_submenu_keyboard(),
+        )
+    elif text in CAKE_SUBCAT_KEYS:
+        parent_key = CAKE_SUBCAT_KEYS[text]
+        label = CAKE_SUBCATS[parent_key]
+        subsections = await get_subsections(parent_key)
+        if not subsections:
+            await update.message.reply_html(
+                f"{label}\n\n🔜 Рецепти ще не додані.",
+                reply_markup=cakes_submenu_keyboard(),
+            )
+        else:
+            await update.message.reply_text(
+                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
+            )
+    elif text == "◀️ Назад":
+        await update.message.reply_html(
+            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
+        )
+    elif text in SECTION_KEYS:
         parent_key = SECTION_KEYS[text]
         label = SECTION_LABELS[parent_key]
         subsections = await get_subsections(parent_key)
@@ -422,7 +444,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("back_section_"):
         parent_key = data[len("back_section_"):]
-        label = SECTION_LABELS.get(parent_key, "Розділ")
+        label = ALL_SECTION_LABELS.get(parent_key, "Розділ")
         subsections = await get_subsections(parent_key)
         if subsections:
             await query.edit_message_text(
@@ -510,6 +532,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
                 reply_markup=admin_main_keyboard(),
             )
+        return
+
+    if data == "admin_stats":
+        s = await get_stats()
+        text = (
+            "📊 <b>Статистика</b>\n\n"
+            f"👥 <b>Всього користувачів:</b> {s['total_users']}\n"
+            f"✅ <b>Активна підписка:</b> {s['active_users']}\n"
+            f"⏰ <b>Підписка прострочена:</b> {s['expired_users']}\n"
+            f"🚫 <b>Без доступу:</b> {s['no_access_users']}\n\n"
+            f"📂 <b>Підрозділів всього:</b> {s['total_sections']}\n"
+            f"🟢 <b>Активних підрозділів:</b> {s['active_sections']}\n"
+        )
+        await query.edit_message_text(
+            text, parse_mode="HTML",
+            reply_markup=back_keyboard("admin_back"),
+        )
         return
 
     if data == "admin_users":
