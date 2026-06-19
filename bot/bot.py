@@ -292,7 +292,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
             )
     elif text == "📩 Зв'язок з автором":
-        await update.message.reply_html(TEXTS["contact_author"], reply_markup=contact_keyboard())
+        await update.message.reply_html(TEXTS["contact_author"], reply_markup=main_menu_keyboard(True))
     else:
         await update.message.reply_html(
             TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
