@@ -603,13 +603,7 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await grant_access(target_id, days=SUBSCRIPTION_DAYS)
         await update.message.reply_html(
             f"✅ Доступ надано <code>{target_id}</code> на {SUBSCRIPTION_DAYS} днів.",
-            reply_markup=admin_users_keyboard(),
-        )
-    elif action == "revoke":
-        await revoke_access(target_id)
-        await update.message.reply_html(
-            f"❌ Доступ забрано у <code>{target_id}</code>.",
-            reply_markup=admin_users_keyboard(),
+            reply_markup=back_keyboard("admin_users"),
         )
     context.user_data.pop("admin_action", None)
 
@@ -763,11 +757,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "👥 Користувачів ще немає.", reply_markup=admin_users_keyboard()
             )
             return
+        from datetime import datetime as _dt, timezone as _tz
         lines = ["👥 <b>Користувачі:</b>\n"]
         for u in users:
-            status = "✅" if u["has_access"] else "❌"
-            name = u["full_name"] or u["username"] or "—"
-            lines.append(f"{status} <code>{u['user_id']}</code> — {name}")
+            name = u.get("full_name") or u.get("username") or "—"
+            access_until = u.get("access_until")
+            if u["has_access"] and access_until:
+                try:
+                    dt = _dt.fromisoformat(access_until)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=_tz.utc)
+                    date_str = dt.strftime("%d.%m.%Y")
+                    status = f"✅ до {date_str}"
+                except Exception:
+                    status = "✅"
+            elif u["has_access"]:
+                status = "✅"
+            else:
+                status = "❌"
+            lines.append(f"{status} | <code>{u['user_id']}</code> — {name}")
         await query.edit_message_text(
             "\n".join(lines), parse_mode="HTML", reply_markup=admin_users_keyboard()
         )
