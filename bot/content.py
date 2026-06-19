@@ -45,10 +45,10 @@ TEXTS: dict[str, str] = {
 
 # Ключ розділу → назва кнопки
 SECTION_LABELS: dict[str, str] = {
-    "cakes": "🎂 Торти",
-    "cookies": "🍪 Печиво",
-    "desserts": "🍮 Десерти",
-    "drinks": "🍹 Напої",
+    "cakes": "📖 Рецепти",
+    "cookies": "🎂 3D Торти",
+    "desserts": "🎈 Декор",
+    "drinks": "🎨 Різне",
 }
 
 # Текст кнопки → ключ розділу
