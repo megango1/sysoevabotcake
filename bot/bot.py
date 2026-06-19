@@ -485,6 +485,7 @@ def main():
             CommandHandler("add", add_start),
             CallbackQueryHandler(add_start, pattern="^admin_add_section$"),
         ],
+        per_message=False,
         states={
             ASK_TITLE: [
                 CallbackQueryHandler(add_chose_parent, pattern="^add_to_"),

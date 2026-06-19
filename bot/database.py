@@ -13,8 +13,14 @@ _supabase: Client | None = None
 def get_db() -> Client:
     global _supabase
     if _supabase is None:
-        url = os.environ["SUPABASE_URL"]
-        key = os.environ["SUPABASE_KEY"]
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            missing = [v for v in ("SUPABASE_URL", "SUPABASE_KEY") if not os.environ.get(v)]
+            raise RuntimeError(
+                f"Відсутні змінні середовища: {', '.join(missing)}\n"
+                "Додай їх у .env або в налаштуваннях контейнера."
+            )
         _supabase = create_client(url, key)
     return _supabase
 
@@ -25,6 +31,8 @@ async def init_db() -> None:
         db = get_db()
         db.table("users").select("user_id").limit(1).execute()
         logger.info("Supabase connection OK.")
+    except RuntimeError:
+        raise
     except Exception as exc:
         logger.error("Supabase connection failed: %s", exc)
         raise
