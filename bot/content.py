@@ -43,7 +43,7 @@ TEXTS: dict[str, str] = {
     "admin_revoke_prompt": "✏️ Введіть Telegram ID користувача, у якого забрати доступ:",
 }
 
-# Ключ розділу → назва кнопки
+# Ключ розділу → назва кнопки (головне меню)
 SECTION_LABELS: dict[str, str] = {
     "cakes": "📖 Рецепти",
     "cookies": "🎂 3D Торти",
@@ -51,5 +51,23 @@ SECTION_LABELS: dict[str, str] = {
     "drinks": "🎨 Різне",
 }
 
-# Текст кнопки → ключ розділу
-SECTION_KEYS: dict[str, str] = {v: k for k, v in SECTION_LABELS.items()}
+# Підкатегорії розділу «Рецепти» (статичне нижнє меню)
+CAKE_SUBCATS: dict[str, str] = {
+    "cakes_biscuits": "🍰 Бісквіти",
+    "cakes_fillings": "🍯 Начинки",
+    "cakes_creams": "🍦 Крема",
+    "cakes_other": "🔸 Інше",
+}
+
+# Зворотній пошук: текст кнопки → ключ підкатегорії
+CAKE_SUBCAT_KEYS: dict[str, str] = {v: k for k, v in CAKE_SUBCATS.items()}
+
+# Всі розділи (для адмін-панелі: main + підкатегорії рецептів)
+ALL_SECTION_LABELS: dict[str, str] = {**SECTION_LABELS, **CAKE_SUBCATS}
+
+# Текст кнопки → ключ розділу (тільки головне меню, без Рецептів — обробляється окремо)
+SECTION_KEYS: dict[str, str] = {
+    "🎂 3D Торти": "cookies",
+    "🎈 Декор": "desserts",
+    "🎨 Різне": "drinks",
+}

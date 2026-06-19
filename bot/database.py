@@ -112,6 +112,53 @@ async def get_all_users() -> list[dict]:
     return res.data or []
 
 
+async def get_stats() -> dict:
+    db = get_db()
+    now = datetime.now(tz=timezone.utc).isoformat()
+
+    users_res = await _run(lambda: db.table("users")
+        .select("user_id, has_access, access_until")
+        .execute())
+    users = users_res.data or []
+
+    total = len(users)
+    active = 0
+    expired = 0
+    no_access = 0
+
+    for u in users:
+        if u.get("has_access"):
+            until = u.get("access_until")
+            if until:
+                expiry = datetime.fromisoformat(until)
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if expiry >= datetime.now(tz=timezone.utc):
+                    active += 1
+                else:
+                    expired += 1
+            else:
+                active += 1
+        else:
+            no_access += 1
+
+    sections_res = await _run(lambda: db.table("sections")
+        .select("id, is_active")
+        .execute())
+    sections = sections_res.data or []
+    total_sections = len(sections)
+    active_sections = sum(1 for s in sections if s.get("is_active"))
+
+    return {
+        "total_users": total,
+        "active_users": active,
+        "expired_users": expired,
+        "no_access_users": no_access,
+        "total_sections": total_sections,
+        "active_sections": active_sections,
+    }
+
+
 # ── Sections ──────────────────────────────────────────────────────────────────
 
 async def add_section(

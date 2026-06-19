@@ -1,5 +1,5 @@
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton
-from content import SECTION_LABELS
+from content import SECTION_LABELS, CAKE_SUBCATS, ALL_SECTION_LABELS
 
 
 # ── Reply keyboards ───────────────────────────────────────────────────────────
@@ -22,6 +22,18 @@ def main_menu_keyboard(has_access: bool) -> ReplyKeyboardMarkup:
 def contact_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[KeyboardButton("📩 Зв'язок з автором")]],
+        resize_keyboard=True,
+    )
+
+
+def cakes_submenu_keyboard() -> ReplyKeyboardMarkup:
+    subcat_labels = list(CAKE_SUBCATS.values())
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton(subcat_labels[0]), KeyboardButton(subcat_labels[1])],
+            [KeyboardButton(subcat_labels[2]), KeyboardButton(subcat_labels[3])],
+            [KeyboardButton("◀️ Назад")],
+        ],
         resize_keyboard=True,
     )
 
@@ -51,7 +63,7 @@ def subsections_keyboard(subsections: list[dict], parent_key: str) -> InlineKeyb
 
 def choose_parent_keyboard() -> InlineKeyboardMarkup:
     buttons = []
-    for key, label in SECTION_LABELS.items():
+    for key, label in ALL_SECTION_LABELS.items():
         buttons.append([InlineKeyboardButton(label, callback_data=f"add_to_{key}")])
     buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="add_cancel")])
     return InlineKeyboardMarkup(buttons)
@@ -67,6 +79,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("➕ Додати підрозділ", callback_data="admin_add_section")],
             [InlineKeyboardButton("📋 Список підрозділів", callback_data="admin_list_sections")],
             [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
+            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         ]
     )
 
