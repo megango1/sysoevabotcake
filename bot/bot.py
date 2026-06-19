@@ -20,8 +20,9 @@ from telegram.ext import (
 )
 
 PAYMENTS_TOKEN: str = os.environ.get("PAYMENTS_TOKEN", "")
-SUBSCRIPTION_PRICE_UAH = 299
-SUBSCRIPTION_DAYS = 30
+PAYMENT_CURRENCY: str = os.environ.get("PAYMENT_CURRENCY", "UAH")
+SUBSCRIPTION_PRICE: int = int(os.environ.get("SUBSCRIPTION_PRICE", "299"))
+SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
 from database import (
     init_db, upsert_user, check_access,
@@ -286,12 +287,12 @@ async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_invoice(
-        title="Підписка на 30 днів",
-        description="Повний доступ до всіх матеріалів на 30 днів",
+        title=f"Підписка на {SUBSCRIPTION_DAYS} днів",
+        description=f"Повний доступ до всіх матеріалів на {SUBSCRIPTION_DAYS} днів",
         payload=f"sub_{update.effective_user.id}_{SUBSCRIPTION_DAYS}d",
         provider_token=PAYMENTS_TOKEN,
-        currency="UAH",
-        prices=[LabeledPrice("Підписка 30 днів", SUBSCRIPTION_PRICE_UAH * 100)],
+        currency=PAYMENT_CURRENCY,
+        prices=[LabeledPrice(f"Підписка {SUBSCRIPTION_DAYS} днів", SUBSCRIPTION_PRICE * 100)],
         start_parameter="subscribe",
         photo_url=None,
         need_name=False,
