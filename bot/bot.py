@@ -752,7 +752,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_grant":
         context.user_data["admin_action"] = "grant"
         await query.edit_message_text(
-            TEXTS["admin_grant_prompt"], parse_mode="HTML", reply_markup=admin_users_keyboard()
+            TEXTS["admin_grant_prompt"], parse_mode="HTML", reply_markup=back_keyboard("admin_users")
         )
     elif data == "admin_revoke":
         all_users = await get_all_users()
