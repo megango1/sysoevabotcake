@@ -228,8 +228,11 @@ async def _save_section(
 
 async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("new_section", None)
-    if update.message:
-        await update.message.reply_text("❌ Скасовано.")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("◀️ Скасовано.")
+    elif update.message:
+        await update.message.reply_text("◀️ Скасовано.")
     return ConversationHandler.END
 
 

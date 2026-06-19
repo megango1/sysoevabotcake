@@ -65,7 +65,7 @@ def choose_parent_keyboard() -> InlineKeyboardMarkup:
     buttons = []
     for key, label in ALL_SECTION_LABELS.items():
         buttons.append([InlineKeyboardButton(label, callback_data=f"add_to_{key}")])
-    buttons.append([InlineKeyboardButton("❌ Скасувати", callback_data="add_cancel")])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="add_cancel")])
     return InlineKeyboardMarkup(buttons)
 
 
