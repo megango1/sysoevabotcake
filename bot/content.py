@@ -62,8 +62,12 @@ CAKE_SUBCATS: dict[str, str] = {
 # Зворотній пошук: текст кнопки → ключ підкатегорії
 CAKE_SUBCAT_KEYS: dict[str, str] = {v: k for k, v in CAKE_SUBCATS.items()}
 
-# Всі розділи (для адмін-панелі: main + підкатегорії рецептів)
-ALL_SECTION_LABELS: dict[str, str] = {**SECTION_LABELS, **CAKE_SUBCATS}
+# Розділи для адмін-панелі (БЕЗ рецептів — туди не додаємо підрозділи)
+ALL_SECTION_LABELS: dict[str, str] = {
+    "cookies": "🎂 3D Торти",
+    "desserts": "🎈 Декор",
+    "drinks": "🎨 Різне",
+}
 
 # Текст кнопки → ключ розділу (тільки головне меню, без Рецептів — обробляється окремо)
 SECTION_KEYS: dict[str, str] = {
