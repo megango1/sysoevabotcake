@@ -1,107 +1,93 @@
 import os
-from datetime import datetime, timezone, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
+from supabase import create_client, Client
 
-import httpx
+logger = logging.getLogger(__name__)
 
-ADMIN_ID = 1030723047
+ADMIN_ID: int = int(os.environ.get("ADMIN_ID", "0"))
 
-_SUPABASE_URL: str = ""
-_SUPABASE_KEY: str = ""
-_headers: dict = {}
-
-
-def _init_config():
-    global _SUPABASE_URL, _SUPABASE_KEY, _headers
-    if not _SUPABASE_URL:
-        _SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-        _SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-        _headers = {
-            "apikey": _SUPABASE_KEY,
-            "Authorization": f"Bearer {_SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation",
-        }
+_supabase: Client | None = None
 
 
-def _url(table: str) -> str:
-    return f"{_SUPABASE_URL}/rest/v1/{table}"
+def get_db() -> Client:
+    global _supabase
+    if _supabase is None:
+        url = os.environ["SUPABASE_URL"]
+        key = os.environ["SUPABASE_KEY"]
+        _supabase = create_client(url, key)
+    return _supabase
 
 
-async def init_db():
-    _init_config()
-    # Verify connection works
-    async with httpx.AsyncClient() as client:
-        r = await client.get(_url("users"), headers=_headers, params={"limit": "1"})
-        r.raise_for_status()
+async def init_db() -> None:
+    """Verify connection to Supabase on startup."""
+    try:
+        db = get_db()
+        db.table("users").select("user_id").limit(1).execute()
+        logger.info("Supabase connection OK.")
+    except Exception as exc:
+        logger.error("Supabase connection failed: %s", exc)
+        raise
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-async def upsert_user(user_id: int, username: str, full_name: str):
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            _url("users"),
-            headers={**_headers, "Prefer": "resolution=merge-duplicates,return=minimal"},
-            json={"user_id": user_id, "username": username or "", "full_name": full_name or ""},
-        )
+async def upsert_user(user_id: int, username: str | None, full_name: str | None) -> None:
+    db = get_db()
+    db.table("users").upsert(
+        {
+            "user_id": user_id,
+            "username": username,
+            "full_name": full_name,
+        },
+        on_conflict="user_id",
+        ignore_duplicates=False,
+    ).execute()
 
 
 async def check_access(user_id: int) -> bool:
     if user_id == ADMIN_ID:
         return True
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            _url("users"),
-            headers=_headers,
-            params={"user_id": f"eq.{user_id}", "select": "has_access,access_until"},
-        )
-    rows = r.json()
-    if not rows:
+    db = get_db()
+    res = db.table("users").select("has_access, access_until").eq("user_id", user_id).single().execute()
+    if not res.data:
         return False
-    row = rows[0]
+    row = res.data
     if not row.get("has_access"):
         return False
     access_until = row.get("access_until")
-    if not access_until:
-        return True
-    until_dt = datetime.fromisoformat(access_until.replace("Z", "+00:00"))
-    return until_dt > datetime.now(timezone.utc)
+    if access_until:
+        expiry = datetime.fromisoformat(access_until)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if expiry < datetime.now(tz=timezone.utc):
+            db.table("users").update({"has_access": False}).eq("user_id", user_id).execute()
+            return False
+    return True
 
 
-async def grant_access(user_id: int, days: int = 30):
-    _init_config()
-    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-    async with httpx.AsyncClient() as client:
-        await client.patch(
-            _url("users"),
-            headers={**_headers, "Prefer": "return=minimal"},
-            params={"user_id": f"eq.{user_id}"},
-            json={"has_access": True, "access_until": until},
-        )
+async def grant_access(user_id: int, days: int = 30) -> None:
+    db = get_db()
+    access_until = (datetime.now(tz=timezone.utc) + timedelta(days=days)).isoformat()
+    db.table("users").upsert(
+        {
+            "user_id": user_id,
+            "has_access": True,
+            "access_until": access_until,
+        },
+        on_conflict="user_id",
+    ).execute()
 
 
-async def revoke_access(user_id: int):
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        await client.patch(
-            _url("users"),
-            headers={**_headers, "Prefer": "return=minimal"},
-            params={"user_id": f"eq.{user_id}"},
-            json={"has_access": False},
-        )
+async def revoke_access(user_id: int) -> None:
+    db = get_db()
+    db.table("users").update({"has_access": False, "access_until": None}).eq("user_id", user_id).execute()
 
 
 async def get_all_users() -> list[dict]:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            _url("users"),
-            headers=_headers,
-            params={"order": "joined_at.desc"},
-        )
-    return r.json() or []
+    db = get_db()
+    res = db.table("users").select("user_id, username, full_name, has_access, access_until").order("user_id").execute()
+    return res.data or []
 
 
 # ── Sections ──────────────────────────────────────────────────────────────────
@@ -111,77 +97,65 @@ async def add_section(
     title: str,
     emoji: str,
     content: str,
-    photo_file_id: str | None = None,
-    video_file_id: str | None = None,
+    photo_file_id: str | None,
+    video_file_id: str | None,
 ) -> int:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        # Get next order_index
-        r = await client.get(
-            _url("sections"),
-            headers=_headers,
-            params={"parent_key": f"eq.{parent_key}", "select": "order_index", "order": "order_index.desc", "limit": "1"},
-        )
-        rows = r.json()
-        idx = (rows[0]["order_index"] + 1) if rows else 1
-
-        ins = await client.post(
-            _url("sections"),
-            headers=_headers,
-            json={
+    db = get_db()
+    res = (
+        db.table("sections")
+        .insert(
+            {
                 "parent_key": parent_key,
                 "title": title,
                 "emoji": emoji,
                 "content": content,
                 "photo_file_id": photo_file_id,
                 "video_file_id": video_file_id,
-                "order_index": idx,
                 "is_active": True,
-            },
+            }
         )
-    return ins.json()[0]["id"]
+        .execute()
+    )
+    return res.data[0]["id"]
 
 
 async def get_subsections(parent_key: str) -> list[dict]:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            _url("sections"),
-            headers=_headers,
-            params={"parent_key": f"eq.{parent_key}", "is_active": "eq.true", "order": "order_index.asc"},
-        )
-    return r.json() or []
+    db = get_db()
+    res = (
+        db.table("sections")
+        .select("id, title, emoji, is_active")
+        .eq("parent_key", parent_key)
+        .eq("is_active", True)
+        .order("id")
+        .execute()
+    )
+    return res.data or []
 
 
 async def get_subsection(section_id: int) -> dict | None:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            _url("sections"),
-            headers=_headers,
-            params={"id": f"eq.{section_id}"},
-        )
-    rows = r.json()
-    return rows[0] if rows else None
+    db = get_db()
+    res = (
+        db.table("sections")
+        .select("*")
+        .eq("id", section_id)
+        .single()
+        .execute()
+    )
+    return res.data
 
 
-async def delete_section(section_id: int) -> bool:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.delete(
-            _url("sections"),
-            headers={**_headers, "Prefer": "return=representation"},
-            params={"id": f"eq.{section_id}"},
-        )
-    return len(r.json()) > 0
+async def delete_section(section_id: int) -> None:
+    db = get_db()
+    db.table("sections").delete().eq("id", section_id).execute()
 
 
 async def get_all_sections() -> list[dict]:
-    _init_config()
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            _url("sections"),
-            headers=_headers,
-            params={"order": "parent_key.asc,order_index.asc"},
-        )
-    return r.json() or []
+    db = get_db()
+    res = (
+        db.table("sections")
+        .select("id, parent_key, title, emoji, is_active")
+        .order("parent_key")
+        .order("id")
+        .execute()
+    )
+    return res.data or []

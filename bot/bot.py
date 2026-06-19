@@ -1,5 +1,9 @@
 import os
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -24,7 +28,10 @@ from keyboards import (
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
 # ConversationHandler states
@@ -62,7 +69,9 @@ async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = "📂 <b>Додати підрозділ</b>\n\nОберіть розділ, куди додати:"
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=choose_parent_keyboard())
+        await update.callback_query.edit_message_text(
+            text, parse_mode="HTML", reply_markup=choose_parent_keyboard()
+        )
     else:
         await update.message.reply_html(text, reply_markup=choose_parent_keyboard())
     return ASK_TITLE
@@ -90,19 +99,15 @@ async def add_chose_parent(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def add_got_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     title = update.message.text.strip()
     context.user_data["new_section"]["title"] = title
-    await update.message.reply_text(
+    await update.message.reply_html(
         f"✅ Назва: <b>{title}</b>\n\n✏️ Напиши <b>емодзі</b> для кнопки (наприклад: 🎂):",
-        parse_mode="HTML",
         reply_markup=skip_keyboard(),
     )
     return ASK_EMOJI
 
 
 async def add_got_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message:
-        emoji = update.message.text.strip()
-    else:
-        emoji = ""
+    emoji = update.message.text.strip() if update.message else ""
     context.user_data["new_section"]["emoji"] = emoji
     await _ask_content(update, context)
     return ASK_CONTENT
@@ -126,9 +131,8 @@ async def _ask_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_got_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     content = update.message.text.strip()
     context.user_data["new_section"]["content"] = content
-    await update.message.reply_text(
+    await update.message.reply_html(
         "📸 Надішли <b>фото</b> для цього підрозділу (або пропусти):",
-        parse_mode="HTML",
         reply_markup=skip_keyboard(),
     )
     return ASK_PHOTO
@@ -137,9 +141,8 @@ async def add_got_content(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def add_got_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     photo = update.message.photo[-1]
     context.user_data["new_section"]["photo_file_id"] = photo.file_id
-    await update.message.reply_text(
+    await update.message.reply_html(
         "🎬 Надішли <b>відео</b> для цього підрозділу (або пропусти):",
-        parse_mode="HTML",
         reply_markup=skip_keyboard(),
     )
     return ASK_VIDEO
@@ -168,7 +171,11 @@ async def add_skip_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return await _save_section(update, context, via_callback=True)
 
 
-async def _save_section(update: Update, context: ContextTypes.DEFAULT_TYPE, via_callback: bool = False) -> int:
+async def _save_section(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    via_callback: bool = False,
+) -> int:
     data = context.user_data.pop("new_section", {})
     parent_key = data.get("parent_key", "")
     label = SECTION_LABELS.get(parent_key, parent_key)
@@ -266,7 +273,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "💰 Вартість":
             await update.message.reply_html(TEXTS["price_info"])
         else:
-            await update.message.reply_html(TEXTS["welcome_no_access"], reply_markup=main_menu_keyboard(False))
+            await update.message.reply_html(
+                TEXTS["welcome_no_access"], reply_markup=main_menu_keyboard(False)
+            )
         return
 
     if text in SECTION_KEYS:
@@ -282,7 +291,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📩 Зв'язок з автором":
         await update.message.reply_html(TEXTS["contact_author"], reply_markup=contact_keyboard())
     else:
-        await update.message.reply_html(TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True))
+        await update.message.reply_html(
+            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
+        )
 
 
 # ── Admin text input for grant/revoke ─────────────────────────────────────────
@@ -303,10 +314,16 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     if action == "grant":
         await grant_access(target_id, days=30)
-        await update.message.reply_html(f"✅ Доступ надано <code>{target_id}</code> на 30 днів.", reply_markup=admin_main_keyboard())
+        await update.message.reply_html(
+            f"✅ Доступ надано <code>{target_id}</code> на 30 днів.",
+            reply_markup=admin_main_keyboard(),
+        )
     elif action == "revoke":
         await revoke_access(target_id)
-        await update.message.reply_html(f"❌ Доступ забрано у <code>{target_id}</code>.", reply_markup=admin_main_keyboard())
+        await update.message.reply_html(
+            f"❌ Доступ забрано у <code>{target_id}</code>.",
+            reply_markup=admin_main_keyboard(),
+        )
     context.user_data.pop("admin_action", None)
 
 
@@ -320,13 +337,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     has_access = await check_access(user.id)
 
     if data == "pay_now":
-        await query.edit_message_text(TEXTS["pay_now"], parse_mode="HTML", reply_markup=back_keyboard("back_pay"))
+        await query.edit_message_text(
+            TEXTS["pay_now"], parse_mode="HTML", reply_markup=back_keyboard("back_pay")
+        )
         return
     if data == "access_info":
-        await query.edit_message_text(TEXTS["access_info"], parse_mode="HTML", reply_markup=back_keyboard("back_pay"))
+        await query.edit_message_text(
+            TEXTS["access_info"], parse_mode="HTML", reply_markup=back_keyboard("back_pay")
+        )
         return
     if data == "back_pay":
-        await query.edit_message_text(TEXTS["payment_info"], parse_mode="HTML", reply_markup=payment_keyboard())
+        await query.edit_message_text(
+            TEXTS["payment_info"], parse_mode="HTML", reply_markup=payment_keyboard()
+        )
         return
 
     if data.startswith("back_section_"):
@@ -334,14 +357,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         label = SECTION_LABELS.get(parent_key, "Розділ")
         subsections = await get_subsections(parent_key)
         if subsections:
-            await query.edit_message_text(f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key))
+            await query.edit_message_text(
+                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
+            )
         else:
             await query.edit_message_text(f"{label}\n\n🔜 Підрозділи ще не додані.")
         return
 
     if data.startswith("sub_"):
         if not has_access:
-            await query.edit_message_text(TEXTS["welcome_no_access"], parse_mode="HTML", reply_markup=payment_keyboard())
+            await query.edit_message_text(
+                TEXTS["welcome_no_access"], parse_mode="HTML", reply_markup=payment_keyboard()
+            )
             return
         section_id = int(data[4:])
         section = await get_subsection(section_id)
@@ -367,7 +394,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=kb)
         return
 
-    # Admin callbacks
+    # Admin-only callbacks
     if user.id != ADMIN_ID:
         return
 
@@ -375,7 +402,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "admin_back":
-        await query.edit_message_text(TEXTS["admin_panel"], parse_mode="HTML", reply_markup=admin_main_keyboard())
+        await query.edit_message_text(
+            TEXTS["admin_panel"], parse_mode="HTML", reply_markup=admin_main_keyboard()
+        )
         return
 
     if data == "admin_list_sections":
@@ -425,7 +454,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = "✅" if u["has_access"] else "❌"
             name = u["full_name"] or u["username"] or "—"
             lines.append(f"{status} <code>{u['user_id']}</code> — {name}")
-        await query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=admin_main_keyboard())
+        await query.edit_message_text(
+            "\n".join(lines), parse_mode="HTML", reply_markup=admin_main_keyboard()
+        )
     elif data == "admin_grant":
         context.user_data["admin_action"] = "grant"
         await query.message.reply_html(TEXTS["admin_grant_prompt"])
@@ -438,7 +469,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     await init_db()
-    logger.info("База даних ініціалізована.")
+    logger.info("Supabase ініціалізовано.")
 
 
 def main():
@@ -481,14 +512,18 @@ def main():
         per_user=True,
     )
 
-    # All in group 0 — ConversationHandler must be first so it blocks others while active
     app.add_handler(add_conv)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("list", list_sections))
     app.add_handler(CommandHandler("del", del_section))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_ID), handle_admin_input))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_ID),
+            handle_admin_input,
+        )
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Бот запущено!")
