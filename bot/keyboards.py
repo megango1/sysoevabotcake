@@ -67,8 +67,16 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("➕ Додати підрозділ", callback_data="admin_add_section")],
             [InlineKeyboardButton("📋 Список підрозділів", callback_data="admin_list_sections")],
             [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
+        ]
+    )
+
+
+def admin_users_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
             [InlineKeyboardButton("✅ Надати доступ", callback_data="admin_grant")],
             [InlineKeyboardButton("❌ Забрати доступ", callback_data="admin_revoke")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="admin_back")],
         ]
     )
 

@@ -32,8 +32,9 @@ from database import (
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
-    contact_keyboard, admin_main_keyboard, admin_sections_list_keyboard,
-    subsections_keyboard, choose_parent_keyboard, skip_keyboard,
+    contact_keyboard, admin_main_keyboard, admin_users_keyboard,
+    admin_sections_list_keyboard, subsections_keyboard,
+    choose_parent_keyboard, skip_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS
 
@@ -380,16 +381,16 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Невірний ID. Введіть число.")
         return
     if action == "grant":
-        await grant_access(target_id, days=30)
+        await grant_access(target_id, days=SUBSCRIPTION_DAYS)
         await update.message.reply_html(
-            f"✅ Доступ надано <code>{target_id}</code> на 30 днів.",
-            reply_markup=admin_main_keyboard(),
+            f"✅ Доступ надано <code>{target_id}</code> на {SUBSCRIPTION_DAYS} днів.",
+            reply_markup=admin_users_keyboard(),
         )
     elif action == "revoke":
         await revoke_access(target_id)
         await update.message.reply_html(
             f"❌ Доступ забрано у <code>{target_id}</code>.",
-            reply_markup=admin_main_keyboard(),
+            reply_markup=admin_users_keyboard(),
         )
     context.user_data.pop("admin_action", None)
 
@@ -514,7 +515,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_users":
         users = await get_all_users()
         if not users:
-            await query.edit_message_text("Користувачів ще немає.", reply_markup=admin_main_keyboard())
+            await query.edit_message_text(
+                "👥 Користувачів ще немає.", reply_markup=admin_users_keyboard()
+            )
             return
         lines = ["👥 <b>Користувачі:</b>\n"]
         for u in users:
@@ -522,14 +525,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name = u["full_name"] or u["username"] or "—"
             lines.append(f"{status} <code>{u['user_id']}</code> — {name}")
         await query.edit_message_text(
-            "\n".join(lines), parse_mode="HTML", reply_markup=admin_main_keyboard()
+            "\n".join(lines), parse_mode="HTML", reply_markup=admin_users_keyboard()
         )
     elif data == "admin_grant":
         context.user_data["admin_action"] = "grant"
-        await query.message.reply_html(TEXTS["admin_grant_prompt"])
+        await query.edit_message_text(
+            TEXTS["admin_grant_prompt"], parse_mode="HTML", reply_markup=admin_users_keyboard()
+        )
     elif data == "admin_revoke":
         context.user_data["admin_action"] = "revoke"
-        await query.message.reply_html(TEXTS["admin_revoke_prompt"])
+        await query.edit_message_text(
+            TEXTS["admin_revoke_prompt"], parse_mode="HTML", reply_markup=admin_users_keyboard()
+        )
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────
