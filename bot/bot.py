@@ -26,7 +26,7 @@ SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
 from database import (
     init_db, upsert_user, check_access,
-    grant_access, revoke_access, get_all_users, get_stats, ADMIN_ID,
+    grant_access, revoke_access, get_all_users, get_stats, ADMIN_ID, ADMIN_IDS,
     add_section, get_subsections, get_subsection,
     delete_section, get_all_sections,
 )
@@ -72,7 +72,7 @@ async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /admin ────────────────────────────────────────────────────────────────────
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         return
     await update.message.reply_html(
         TEXTS["admin_panel"],
@@ -83,7 +83,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /add — add subsection (ConversationHandler) ───────────────────────────────
 
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         return ConversationHandler.END
     text = "📂 <b>Додати підрозділ</b>\n\nОберіть розділ, куди додати:"
     if update.callback_query:
@@ -239,7 +239,7 @@ async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 # ── /list — list all subsections ──────────────────────────────────────────────
 
 async def list_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         return
     sections = await get_all_sections()
     if not sections:
@@ -263,7 +263,7 @@ async def list_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── /del — delete subsection ──────────────────────────────────────────────────
 
 async def del_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if update.effective_user.id not in ADMIN_IDS:
         return
     args = context.args
     if not args or not args[0].isdigit():
@@ -393,7 +393,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if user.id != ADMIN_ID:
+    if user.id not in ADMIN_IDS:
         return
     action = context.user_data.get("admin_action")
     if not action:
@@ -488,7 +488,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Admin-only callbacks
-    if user.id != ADMIN_ID:
+    if user.id not in ADMIN_IDS:
         return
 
     if data == "noop":
@@ -640,7 +640,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_ID),
+            filters.TEXT & ~filters.COMMAND & filters.User(list(ADMIN_IDS)),
             handle_admin_input,
         )
     )

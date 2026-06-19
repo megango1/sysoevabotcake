@@ -6,7 +6,12 @@ from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
 
-ADMIN_ID: int = int(os.environ.get("ADMIN_ID", "0"))
+def _parse_admin_ids() -> set[int]:
+    raw = os.environ.get("ADMIN_ID", "0")
+    return {int(x.strip()) for x in raw.split(",") if x.strip().isdigit()}
+
+ADMIN_IDS: set[int] = _parse_admin_ids()
+ADMIN_ID: int = next(iter(ADMIN_IDS), 0)
 
 _supabase: Client | None = None
 
@@ -59,7 +64,7 @@ async def upsert_user(user_id: int, username: str | None, full_name: str | None)
 
 
 async def check_access(user_id: int) -> bool:
-    if user_id == ADMIN_ID:
+    if user_id in ADMIN_IDS:
         return True
     db = get_db()
     res = await _run(lambda: db.table("users")
