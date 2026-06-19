@@ -7,16 +7,21 @@ load_dotenv()
 
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=UserWarning)
 
-from telegram import Update
+from telegram import Update, LabeledPrice
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
+    PreCheckoutQueryHandler,
     ContextTypes,
     filters,
 )
+
+PAYMENTS_TOKEN: str = os.environ.get("PAYMENTS_TOKEN", "")
+SUBSCRIPTION_PRICE_UAH = 299
+SUBSCRIPTION_DAYS = 30
 
 from database import (
     init_db, upsert_user, check_access,
@@ -50,6 +55,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html(
         TEXTS["welcome_access"] if has_access else TEXTS["welcome_no_access"],
         reply_markup=main_menu_keyboard(has_access),
+    )
+
+
+# ── /myid ─────────────────────────────────────────────────────────────────────
+
+async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_html(
+        f"🆔 Твій Telegram ID: <code>{user.id}</code>"
     )
 
 
@@ -262,6 +276,55 @@ async def del_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── Payments ──────────────────────────────────────────────────────────────────
+
+async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a Telegram invoice to the user."""
+    if not PAYMENTS_TOKEN:
+        await update.message.reply_html(
+            TEXTS["payment_info"], reply_markup=payment_keyboard()
+        )
+        return
+    await update.message.reply_invoice(
+        title="Підписка на 30 днів",
+        description="Повний доступ до всіх матеріалів на 30 днів",
+        payload=f"sub_{update.effective_user.id}_{SUBSCRIPTION_DAYS}d",
+        provider_token=PAYMENTS_TOKEN,
+        currency="UAH",
+        prices=[LabeledPrice("Підписка 30 днів", SUBSCRIPTION_PRICE_UAH * 100)],
+        start_parameter="subscribe",
+        photo_url=None,
+        need_name=False,
+        need_phone_number=False,
+        need_email=False,
+    )
+
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirm the payment before Telegram processes it (must reply within 10 sec)."""
+    query = update.pre_checkout_query
+    await query.answer(ok=True)
+
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Grant access automatically after successful payment."""
+    user = update.effective_user
+    payment = update.message.successful_payment
+    await grant_access(user.id, days=SUBSCRIPTION_DAYS)
+    logger.info(
+        "Payment from user %s: %s %s",
+        user.id,
+        payment.total_amount / 100,
+        payment.currency,
+    )
+    await update.message.reply_html(
+        f"✅ <b>Оплата отримана!</b>\n\n"
+        f"Доступ відкрито на <b>{SUBSCRIPTION_DAYS} днів</b>.\n"
+        f"Дякуємо за підтримку! 🎉",
+        reply_markup=main_menu_keyboard(True),
+    )
+
+
 # ── Text messages ─────────────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,7 +335,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not has_access:
         if text == "💳 Оплатити підписку":
-            await update.message.reply_html(TEXTS["payment_info"], reply_markup=payment_keyboard())
+            await send_invoice(update, context)
         elif text == "💰 Вартість":
             await update.message.reply_html(TEXTS["price_info"])
         else:
@@ -518,9 +581,12 @@ def main():
 
     app.add_handler(add_conv)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myid", myid_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("list", list_sections))
     app.add_handler(CommandHandler("del", del_section))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(

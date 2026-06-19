@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
@@ -29,11 +30,15 @@ def get_db() -> Client:
     return _supabase
 
 
+async def _run(fn):
+    """Run a blocking Supabase call in a thread so the event loop stays free."""
+    return await asyncio.to_thread(fn)
+
+
 async def init_db() -> None:
-    """Verify connection to Supabase on startup."""
     try:
         db = get_db()
-        db.table("users").select("user_id").limit(1).execute()
+        await _run(lambda: db.table("users").select("user_id").limit(1).execute())
         logger.info("Supabase connection OK.")
     except RuntimeError:
         raise
@@ -46,22 +51,22 @@ async def init_db() -> None:
 
 async def upsert_user(user_id: int, username: str | None, full_name: str | None) -> None:
     db = get_db()
-    db.table("users").upsert(
-        {
-            "user_id": user_id,
-            "username": username,
-            "full_name": full_name,
-        },
+    await _run(lambda: db.table("users").upsert(
+        {"user_id": user_id, "username": username, "full_name": full_name},
         on_conflict="user_id",
         ignore_duplicates=False,
-    ).execute()
+    ).execute())
 
 
 async def check_access(user_id: int) -> bool:
     if user_id == ADMIN_ID:
         return True
     db = get_db()
-    res = db.table("users").select("has_access, access_until").eq("user_id", user_id).single().execute()
+    res = await _run(lambda: db.table("users")
+        .select("has_access, access_until")
+        .eq("user_id", user_id)
+        .single()
+        .execute())
     if not res.data:
         return False
     row = res.data
@@ -73,7 +78,10 @@ async def check_access(user_id: int) -> bool:
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=timezone.utc)
         if expiry < datetime.now(tz=timezone.utc):
-            db.table("users").update({"has_access": False}).eq("user_id", user_id).execute()
+            await _run(lambda: db.table("users")
+                .update({"has_access": False})
+                .eq("user_id", user_id)
+                .execute())
             return False
     return True
 
@@ -81,24 +89,26 @@ async def check_access(user_id: int) -> bool:
 async def grant_access(user_id: int, days: int = 30) -> None:
     db = get_db()
     access_until = (datetime.now(tz=timezone.utc) + timedelta(days=days)).isoformat()
-    db.table("users").upsert(
-        {
-            "user_id": user_id,
-            "has_access": True,
-            "access_until": access_until,
-        },
+    await _run(lambda: db.table("users").upsert(
+        {"user_id": user_id, "has_access": True, "access_until": access_until},
         on_conflict="user_id",
-    ).execute()
+    ).execute())
 
 
 async def revoke_access(user_id: int) -> None:
     db = get_db()
-    db.table("users").update({"has_access": False, "access_until": None}).eq("user_id", user_id).execute()
+    await _run(lambda: db.table("users")
+        .update({"has_access": False, "access_until": None})
+        .eq("user_id", user_id)
+        .execute())
 
 
 async def get_all_users() -> list[dict]:
     db = get_db()
-    res = db.table("users").select("user_id, username, full_name, has_access, access_until").order("user_id").execute()
+    res = await _run(lambda: db.table("users")
+        .select("user_id, username, full_name, has_access, access_until")
+        .order("user_id")
+        .execute())
     return res.data or []
 
 
@@ -113,61 +123,49 @@ async def add_section(
     video_file_id: str | None,
 ) -> int:
     db = get_db()
-    res = (
-        db.table("sections")
-        .insert(
-            {
-                "parent_key": parent_key,
-                "title": title,
-                "emoji": emoji,
-                "content": content,
-                "photo_file_id": photo_file_id,
-                "video_file_id": video_file_id,
-                "is_active": True,
-            }
-        )
-        .execute()
-    )
+    res = await _run(lambda: db.table("sections").insert({
+        "parent_key": parent_key,
+        "title": title,
+        "emoji": emoji,
+        "content": content,
+        "photo_file_id": photo_file_id,
+        "video_file_id": video_file_id,
+        "is_active": True,
+    }).execute())
     return res.data[0]["id"]
 
 
 async def get_subsections(parent_key: str) -> list[dict]:
     db = get_db()
-    res = (
-        db.table("sections")
+    res = await _run(lambda: db.table("sections")
         .select("id, title, emoji, is_active")
         .eq("parent_key", parent_key)
         .eq("is_active", True)
         .order("id")
-        .execute()
-    )
+        .execute())
     return res.data or []
 
 
 async def get_subsection(section_id: int) -> dict | None:
     db = get_db()
-    res = (
-        db.table("sections")
+    res = await _run(lambda: db.table("sections")
         .select("*")
         .eq("id", section_id)
         .single()
-        .execute()
-    )
+        .execute())
     return res.data
 
 
 async def delete_section(section_id: int) -> None:
     db = get_db()
-    db.table("sections").delete().eq("id", section_id).execute()
+    await _run(lambda: db.table("sections").delete().eq("id", section_id).execute())
 
 
 async def get_all_sections() -> list[dict]:
     db = get_db()
-    res = (
-        db.table("sections")
+    res = await _run(lambda: db.table("sections")
         .select("id, parent_key, title, emoji, is_active")
         .order("parent_key")
         .order("id")
-        .execute()
-    )
+        .execute())
     return res.data or []
