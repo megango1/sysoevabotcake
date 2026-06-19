@@ -34,7 +34,7 @@ from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
     contact_keyboard, cakes_submenu_keyboard, admin_main_keyboard,
     admin_subsections_menu_keyboard, admin_sections_pick_keyboard,
-    admin_users_keyboard, admin_sections_list_keyboard,
+    admin_users_keyboard, admin_revoke_users_keyboard, admin_sections_list_keyboard,
     subsections_keyboard, choose_parent_keyboard, skip_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
@@ -755,10 +755,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             TEXTS["admin_grant_prompt"], parse_mode="HTML", reply_markup=admin_users_keyboard()
         )
     elif data == "admin_revoke":
-        context.user_data["admin_action"] = "revoke"
+        all_users = await get_all_users()
+        active = [u for u in all_users if u.get("has_access")]
+        if not active:
+            await query.edit_message_text(
+                "👥 Немає користувачів з активним доступом.",
+                reply_markup=admin_users_keyboard(),
+            )
+            return
         await query.edit_message_text(
-            TEXTS["admin_revoke_prompt"], parse_mode="HTML", reply_markup=admin_users_keyboard()
+            "❌ <b>Забрати доступ</b>\n\nОбери користувача:",
+            parse_mode="HTML",
+            reply_markup=admin_revoke_users_keyboard(active),
         )
+    elif data.startswith("revoke_user_"):
+        target_id = int(data.replace("revoke_user_", ""))
+        await revoke_access(target_id)
+        all_users = await get_all_users()
+        active = [u for u in all_users if u.get("has_access")]
+        if active:
+            await query.edit_message_text(
+                f"✅ Доступ забрано у <code>{target_id}</code>.\n\n❌ <b>Забрати доступ</b>\n\nОбери користувача:",
+                parse_mode="HTML",
+                reply_markup=admin_revoke_users_keyboard(active),
+            )
+        else:
+            await query.edit_message_text(
+                f"✅ Доступ забрано у <code>{target_id}</code>.\n\nБільше немає користувачів з доступом.",
+                parse_mode="HTML",
+                reply_markup=admin_users_keyboard(),
+            )
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────

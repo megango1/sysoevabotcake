@@ -116,6 +116,16 @@ def admin_users_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def admin_revoke_users_keyboard(users: list[dict]) -> InlineKeyboardMarkup:
+    buttons = []
+    for u in users:
+        name = u.get("full_name") or u.get("username") or str(u["user_id"])
+        label = f"❌ {name} ({u['user_id']})"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"revoke_user_{u['user_id']}")])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_users")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def admin_sections_list_keyboard(sections: list[dict]) -> InlineKeyboardMarkup:
     buttons = []
     for s in sections:
