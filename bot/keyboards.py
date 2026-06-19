@@ -73,15 +73,37 @@ def skip_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⏭ Пропустити", callback_data="skip")]])
 
 
+# ── Admin keyboards ───────────────────────────────────────────────────────────
+
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("➕ Додати підрозділ", callback_data="admin_add_section")],
-            [InlineKeyboardButton("📋 Список підрозділів", callback_data="admin_list_sections")],
+            [InlineKeyboardButton("📂 Підрозділи", callback_data="admin_subsections_menu")],
             [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
             [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         ]
     )
+
+
+def admin_subsections_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("➕ Додати", callback_data="admin_add_section")],
+            [InlineKeyboardButton("✏️ Редагувати", callback_data="admin_edit_section")],
+            [InlineKeyboardButton("🗑 Видалити", callback_data="admin_list_sections")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="admin_back")],
+        ]
+    )
+
+
+def admin_sections_pick_keyboard(sections: list[dict], prefix: str = "edit_pick_") -> InlineKeyboardMarkup:
+    buttons = []
+    for s in sections:
+        emoji = s.get("emoji", "")
+        label = f"{emoji} {s['title']}".strip()
+        buttons.append([InlineKeyboardButton(label, callback_data=f"{prefix}{s['id']}")])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="edit_cancel")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def admin_users_keyboard() -> InlineKeyboardMarkup:
@@ -100,5 +122,5 @@ def admin_sections_list_keyboard(sections: list[dict]) -> InlineKeyboardMarkup:
         emoji = s.get("emoji", "")
         label = f"🗑 {emoji} {s['title']} (#{s['id']})"
         buttons.append([InlineKeyboardButton(label, callback_data=f"admin_del_{s['id']}")])
-    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_back")])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_subsections_menu")])
     return InlineKeyboardMarkup(buttons)

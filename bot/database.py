@@ -208,6 +208,11 @@ async def get_subsection(section_id: int) -> dict | None:
     return res.data
 
 
+async def update_section(section_id: int, **fields) -> None:
+    db = get_db()
+    await _run(lambda: db.table("sections").update(fields).eq("id", section_id).execute())
+
+
 async def delete_section(section_id: int) -> None:
     db = get_db()
     await _run(lambda: db.table("sections").delete().eq("id", section_id).execute())

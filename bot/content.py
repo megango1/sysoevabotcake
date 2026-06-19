@@ -33,7 +33,7 @@ TEXTS: dict[str, str] = {
     "contact_author": (
         "📩 <b>Зв'язок з автором</b>\n\n"
         "Питання, побажання або проблеми?\n"
-        "Пиши: @your_username"
+        "Пиши: @ksysha_sysoeva"
     ),
     "admin_panel": (
         "🔧 <b>Панель адміністратора</b>\n\n"

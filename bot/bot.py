@@ -28,11 +28,12 @@ from database import (
     init_db, upsert_user, check_access,
     grant_access, revoke_access, get_all_users, get_stats, ADMIN_ID, ADMIN_IDS,
     add_section, get_subsections, get_subsection,
-    delete_section, get_all_sections,
+    update_section, delete_section, get_all_sections,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
     contact_keyboard, cakes_submenu_keyboard, admin_main_keyboard,
+    admin_subsections_menu_keyboard, admin_sections_pick_keyboard,
     admin_users_keyboard, admin_sections_list_keyboard,
     subsections_keyboard, choose_parent_keyboard, skip_keyboard,
 )
@@ -44,8 +45,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ConversationHandler states
+# ConversationHandler states — add flow
 ASK_TITLE, ASK_EMOJI, ASK_CONTENT, ASK_PHOTO, ASK_VIDEO = range(5)
+# ConversationHandler states — edit flow
+EDIT_PICK, EDIT_TITLE, EDIT_EMOJI, EDIT_CONTENT, EDIT_PHOTO, EDIT_VIDEO = range(5, 11)
 
 
 # ── /start ────────────────────────────────────────────────────────────────────
@@ -228,6 +231,175 @@ async def _save_section(
 
 async def add_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.pop("new_section", None)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("◀️ Скасовано.")
+    elif update.message:
+        await update.message.reply_text("◀️ Скасовано.")
+    return ConversationHandler.END
+
+
+# ── Edit section (ConversationHandler) ────────────────────────────────────────
+
+async def edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.effective_user.id not in ADMIN_IDS:
+        return ConversationHandler.END
+    await update.callback_query.answer()
+    sections = await get_all_sections()
+    if not sections:
+        await update.callback_query.edit_message_text(
+            "📋 Підрозділів ще немає.",
+            reply_markup=back_keyboard("admin_subsections_menu"),
+        )
+        return ConversationHandler.END
+    await update.callback_query.edit_message_text(
+        "✏️ <b>Редагувати підрозділ</b>\n\nОбери підрозділ:",
+        parse_mode="HTML",
+        reply_markup=admin_sections_pick_keyboard(sections),
+    )
+    return EDIT_PICK
+
+
+async def edit_picked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "edit_cancel":
+        await query.edit_message_text("◀️ Скасовано.")
+        return ConversationHandler.END
+    section_id = int(query.data.replace("edit_pick_", ""))
+    section = await get_subsection(section_id)
+    if not section:
+        await query.edit_message_text("❌ Підрозділ не знайдено.")
+        return ConversationHandler.END
+    context.user_data["edit_section"] = {"id": section_id, "original": section, "updates": {}}
+    title = section.get("title", "")
+    emoji = section.get("emoji", "")
+    await query.edit_message_text(
+        f"✏️ Редагуєш: <b>{emoji} {title}</b>\n\n"
+        f"Поточна назва: <b>{title}</b>\n\nНапиши нову назву або пропусти:",
+        parse_mode="HTML",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_TITLE
+
+
+async def edit_got_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["edit_section"]["updates"]["title"] = update.message.text.strip()
+    orig = context.user_data["edit_section"]["original"]
+    await update.message.reply_html(
+        f"Поточне емодзі: <b>{orig.get('emoji') or '—'}</b>\n\nНапиши нове або пропусти:",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_EMOJI
+
+
+async def edit_skip_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    orig = context.user_data["edit_section"]["original"]
+    await update.callback_query.edit_message_text(
+        f"Поточне емодзі: <b>{orig.get('emoji') or '—'}</b>\n\nНапиши нове або пропусти:",
+        parse_mode="HTML",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_EMOJI
+
+
+async def edit_got_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["edit_section"]["updates"]["emoji"] = update.message.text.strip()
+    orig = context.user_data["edit_section"]["original"]
+    preview = (orig.get("content") or "")[:100]
+    await update.message.reply_html(
+        f"Поточний текст:\n<i>{preview}{'...' if len(orig.get('content',''))>100 else ''}</i>\n\nНапиши новий або пропусти:",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_CONTENT
+
+
+async def edit_skip_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    orig = context.user_data["edit_section"]["original"]
+    preview = (orig.get("content") or "")[:100]
+    await update.callback_query.edit_message_text(
+        f"Поточний текст:\n<i>{preview}{'...' if len(orig.get('content',''))>100 else ''}</i>\n\nНапиши новий або пропусти:",
+        parse_mode="HTML",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_CONTENT
+
+
+async def edit_got_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["edit_section"]["updates"]["content"] = update.message.text.strip()
+    await update.message.reply_html(
+        "📸 Надішли нове <b>фото</b> або пропусти (залишиться поточне):",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_PHOTO
+
+
+async def edit_skip_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📸 Надішли нове <b>фото</b> або пропусти (залишиться поточне):",
+        parse_mode="HTML",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_PHOTO
+
+
+async def edit_got_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["edit_section"]["updates"]["photo_file_id"] = update.message.photo[-1].file_id
+    await update.message.reply_html(
+        "🎬 Надішли нове <b>відео</b> або пропусти (залишиться поточне):",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_VIDEO
+
+
+async def edit_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "🎬 Надішли нове <b>відео</b> або пропусти (залишиться поточне):",
+        parse_mode="HTML",
+        reply_markup=skip_keyboard(),
+    )
+    return EDIT_VIDEO
+
+
+async def edit_got_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data["edit_section"]["updates"]["video_file_id"] = update.message.video.file_id
+    return await _save_edit(update, context)
+
+
+async def edit_skip_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    return await _save_edit(update, context, via_callback=True)
+
+
+async def _save_edit(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    via_callback: bool = False,
+) -> int:
+    data = context.user_data.pop("edit_section", {})
+    section_id = data.get("id")
+    updates = data.get("updates", {})
+    if updates and section_id:
+        await update_section(section_id, **updates)
+        section = await get_subsection(section_id)
+        emoji = section.get("emoji", "") if section else ""
+        title = section.get("title", str(section_id)) if section else str(section_id)
+        msg = f"✅ <b>Підрозділ оновлено!</b>\n\n🔘 {emoji} {title}"
+    else:
+        msg = "ℹ️ Змін не було."
+    if via_callback:
+        await update.callback_query.edit_message_text(msg, parse_mode="HTML")
+    else:
+        await update.message.reply_html(msg)
+    return ConversationHandler.END
+
+
+async def edit_cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.pop("edit_section", None)
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text("◀️ Скасовано.")
@@ -500,12 +672,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if data == "admin_subsections_menu":
+        await query.edit_message_text(
+            "📂 <b>Підрозділи</b>\n\nОбери дію:",
+            parse_mode="HTML",
+            reply_markup=admin_subsections_menu_keyboard(),
+        )
+        return
+
     if data == "admin_list_sections":
         sections = await get_all_sections()
         if not sections:
             await query.edit_message_text(
-                "📋 Підрозділів ще немає.\n\nНатисни ➕ Додати підрозділ.",
-                reply_markup=admin_main_keyboard(),
+                "📋 Підрозділів ще немає.",
+                reply_markup=admin_subsections_menu_keyboard(),
             )
             return
         await query.edit_message_text(
@@ -533,7 +713,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"🗑 Видалено: {emoji} <b>{title}</b>\n\nПідрозділів більше немає.",
                 parse_mode="HTML",
-                reply_markup=admin_main_keyboard(),
+                reply_markup=admin_subsections_menu_keyboard(),
             )
         return
 
@@ -629,7 +809,44 @@ def main():
         per_user=True,
     )
 
+    # ConversationHandler for editing sections
+    edit_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(edit_start, pattern="^admin_edit_section$"),
+        ],
+        per_message=False,
+        states={
+            EDIT_PICK: [
+                CallbackQueryHandler(edit_picked, pattern="^edit_pick_\\d+$"),
+                CallbackQueryHandler(edit_cancel_handler, pattern="^edit_cancel$"),
+            ],
+            EDIT_TITLE: [
+                CallbackQueryHandler(edit_skip_title, pattern="^skip$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_got_title),
+            ],
+            EDIT_EMOJI: [
+                CallbackQueryHandler(edit_skip_emoji, pattern="^skip$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_got_emoji),
+            ],
+            EDIT_CONTENT: [
+                CallbackQueryHandler(edit_skip_content, pattern="^skip$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_got_content),
+            ],
+            EDIT_PHOTO: [
+                CallbackQueryHandler(edit_skip_photo, pattern="^skip$"),
+                MessageHandler(filters.PHOTO, edit_got_photo),
+            ],
+            EDIT_VIDEO: [
+                CallbackQueryHandler(edit_skip_video, pattern="^skip$"),
+                MessageHandler(filters.VIDEO, edit_got_video),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", edit_cancel_handler)],
+        per_user=True,
+    )
+
     app.add_handler(add_conv)
+    app.add_handler(edit_conv)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", myid_command))
     app.add_handler(CommandHandler("admin", admin_command))
