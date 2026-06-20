@@ -7,7 +7,7 @@ load_dotenv()
 
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=UserWarning)
 
-from telegram import Update, LabeledPrice
+from telegram import Update, LabeledPrice, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -35,7 +35,7 @@ from keyboards import (
     contact_keyboard, cakes_submenu_keyboard, admin_main_keyboard,
     admin_subsections_menu_keyboard, admin_sections_pick_keyboard,
     admin_users_keyboard, admin_revoke_users_keyboard, admin_sections_list_keyboard,
-    subsections_keyboard, choose_parent_keyboard, skip_keyboard,
+    subsections_keyboard, choose_parent_keyboard, skip_keyboard, media_collect_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
 
@@ -153,43 +153,54 @@ async def _ask_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_got_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     content = update.message.text.strip()
     context.user_data["new_section"]["content"] = content
+    context.user_data["new_section"].setdefault("photos", [])
     await update.message.reply_html(
-        "📸 Надішли <b>фото</b> для цього підрозділу (або пропусти):",
-        reply_markup=skip_keyboard(),
+        "📸 Надішли <b>фото</b> для цього підрозділу.\nМожна надіслати кілька — по одному:",
+        reply_markup=media_collect_keyboard(0, "фото"),
     )
     return ASK_PHOTO
 
 
 async def add_got_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     photo = update.message.photo[-1]
-    context.user_data["new_section"]["photo_file_id"] = photo.file_id
+    photos = context.user_data["new_section"].setdefault("photos", [])
+    photos.append(photo.file_id)
+    count = len(photos)
     await update.message.reply_html(
-        "🎬 Надішли <b>відео</b> для цього підрозділу (або пропусти):",
-        reply_markup=skip_keyboard(),
+        f"✅ Фото {count} додано! Надішли ще або натисни <b>Далі</b>:",
+        reply_markup=media_collect_keyboard(count, "фото"),
     )
-    return ASK_VIDEO
+    return ASK_PHOTO
 
 
-async def add_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def add_next_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
-    context.user_data["new_section"]["photo_file_id"] = None
+    context.user_data["new_section"].setdefault("videos", [])
+    count = len(context.user_data["new_section"].get("photos", []))
     await update.callback_query.edit_message_text(
-        "🎬 Надішли <b>відео</b> для цього підрозділу (або пропусти):",
+        "🎬 Надішли <b>відео</b> для цього підрозділу.\nМожна надіслати кілька — по одному:"
+        if count == 0 else
+        f"✅ {count} фото збережено.\n\n🎬 Надішли <b>відео</b> або натисни <b>Далі</b>:",
         parse_mode="HTML",
-        reply_markup=skip_keyboard(),
+        reply_markup=media_collect_keyboard(0, "відео"),
     )
     return ASK_VIDEO
 
 
 async def add_got_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     video = update.message.video
-    context.user_data["new_section"]["video_file_id"] = video.file_id
-    return await _save_section(update, context)
+    videos = context.user_data["new_section"].setdefault("videos", [])
+    videos.append(video.file_id)
+    count = len(videos)
+    await update.message.reply_html(
+        f"✅ Відео {count} додано! Надішли ще або натисни <b>Далі</b>:",
+        reply_markup=media_collect_keyboard(count, "відео"),
+    )
+    return ASK_VIDEO
 
 
-async def add_skip_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def add_next_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
-    context.user_data["new_section"]["video_file_id"] = None
     return await _save_section(update, context, via_callback=True)
 
 
@@ -204,13 +215,18 @@ async def _save_section(
     emoji = data.get("emoji", "")
     title = data.get("title", "")
 
+    photos = data.get("photos", [])
+    videos = data.get("videos", [])
+    photo_file_id = "|||".join(photos) if photos else None
+    video_file_id = "|||".join(videos) if videos else None
+
     section_id = await add_section(
         parent_key=parent_key,
         title=title,
         emoji=emoji,
         content=data.get("content", ""),
-        photo_file_id=data.get("photo_file_id"),
-        video_file_id=data.get("video_file_id"),
+        photo_file_id=photo_file_id,
+        video_file_id=video_file_id,
     )
 
     summary = (
@@ -218,8 +234,8 @@ async def _save_section(
         f"🆔 ID: <code>{section_id}</code>\n"
         f"📂 Розділ: {label}\n"
         f"🔘 Кнопка: {emoji} {title}\n"
-        f"📸 Фото: {'так' if data.get('photo_file_id') else 'немає'}\n"
-        f"🎬 Відео: {'так' if data.get('video_file_id') else 'немає'}"
+        f"📸 Фото: {len(photos) if photos else 'немає'}\n"
+        f"🎬 Відео: {len(videos) if videos else 'немає'}"
     )
 
     if via_callback:
@@ -347,31 +363,48 @@ async def edit_skip_content(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def edit_got_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["edit_section"]["updates"]["photo_file_id"] = update.message.photo[-1].file_id
+    photos = context.user_data["edit_section"].setdefault("new_photos", [])
+    photos.append(update.message.photo[-1].file_id)
+    count = len(photos)
     await update.message.reply_html(
-        "🎬 Надішли нове <b>відео</b> або пропусти (залишиться поточне):",
-        reply_markup=skip_keyboard(),
+        f"✅ Фото {count} додано! Надішли ще або натисни <b>Далі</b>:",
+        reply_markup=media_collect_keyboard(count, "фото"),
     )
-    return EDIT_VIDEO
+    return EDIT_PHOTO
 
 
-async def edit_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def edit_next_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
+    new_photos = context.user_data["edit_section"].get("new_photos", [])
+    if new_photos:
+        context.user_data["edit_section"]["updates"]["photo_file_id"] = "|||".join(new_photos)
+    count = len(new_photos)
     await update.callback_query.edit_message_text(
-        "🎬 Надішли нове <b>відео</b> або пропусти (залишиться поточне):",
+        "🎬 Надішли нове <b>відео</b> або натисни <b>Далі</b> (залишиться поточне):"
+        if count == 0 else
+        f"✅ {count} фото збережено.\n\n🎬 Надішли <b>відео</b> або натисни <b>Далі</b>:",
         parse_mode="HTML",
-        reply_markup=skip_keyboard(),
+        reply_markup=media_collect_keyboard(0, "відео"),
     )
     return EDIT_VIDEO
 
 
 async def edit_got_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["edit_section"]["updates"]["video_file_id"] = update.message.video.file_id
-    return await _save_edit(update, context)
+    videos = context.user_data["edit_section"].setdefault("new_videos", [])
+    videos.append(update.message.video.file_id)
+    count = len(videos)
+    await update.message.reply_html(
+        f"✅ Відео {count} додано! Надішли ще або натисни <b>Далі</b>:",
+        reply_markup=media_collect_keyboard(count, "відео"),
+    )
+    return EDIT_VIDEO
 
 
-async def edit_skip_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def edit_next_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
+    new_videos = context.user_data["edit_section"].get("new_videos", [])
+    if new_videos:
+        context.user_data["edit_section"]["updates"]["video_file_id"] = "|||".join(new_videos)
     return await _save_edit(update, context, via_callback=True)
 
 
@@ -660,16 +693,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         label = f"{section['emoji']} {section['title']}" if section.get("emoji") else section["title"]
         content = section.get("content") or "🔜 Контент скоро буде додано..."
         parent_key = section.get("parent_key", "")
-        photo_fid = section.get("photo_file_id")
-        video_fid = section.get("video_file_id")
+        photo_raw = section.get("photo_file_id") or ""
+        video_raw = section.get("video_file_id") or ""
+        photos = [p for p in photo_raw.split("|||") if p]
+        videos = [v for v in video_raw.split("|||") if v]
         caption = f"*{label}*\n\n{content}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
-        if video_fid:
-            await query.message.reply_video(video=video_fid, caption=caption, parse_mode="Markdown", reply_markup=kb)
-            await query.delete_message()
-        elif photo_fid:
-            await query.message.reply_photo(photo=photo_fid, caption=caption, parse_mode="Markdown", reply_markup=kb)
+        sent_media = False
+        if photos:
+            if len(photos) == 1:
+                await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="Markdown")
+            else:
+                media_group = [InputMediaPhoto(media=fid) for fid in photos]
+                media_group[0] = InputMediaPhoto(media=photos[0], caption=caption, parse_mode="Markdown")
+                await query.message.reply_media_group(media=media_group)
+            sent_media = True
+        if videos:
+            for i, vfid in enumerate(videos):
+                await query.message.reply_video(
+                    video=vfid,
+                    caption=(caption if not sent_media and i == 0 else None),
+                    parse_mode="Markdown" if not sent_media and i == 0 else None,
+                    reply_markup=(kb if i == len(videos) - 1 and not photos else None),
+                )
+            sent_media = True
+        if sent_media:
+            if photos and not videos:
+                await query.message.reply_text("⬆️", reply_markup=kb)
             await query.delete_message()
         else:
             await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=kb)
@@ -852,12 +903,12 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_content),
             ],
             ASK_PHOTO: [
-                CallbackQueryHandler(add_skip_photo, pattern="^skip$"),
+                CallbackQueryHandler(add_next_photo, pattern="^media_next$"),
                 MessageHandler(filters.PHOTO, add_got_photo),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_content),
             ],
             ASK_VIDEO: [
-                CallbackQueryHandler(add_skip_video, pattern="^skip$"),
+                CallbackQueryHandler(add_next_video, pattern="^media_next$"),
                 MessageHandler(filters.VIDEO, add_got_video),
             ],
         },
@@ -889,11 +940,11 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_got_content),
             ],
             EDIT_PHOTO: [
-                CallbackQueryHandler(edit_skip_photo, pattern="^skip$"),
+                CallbackQueryHandler(edit_next_photo, pattern="^media_next$"),
                 MessageHandler(filters.PHOTO, edit_got_photo),
             ],
             EDIT_VIDEO: [
-                CallbackQueryHandler(edit_skip_video, pattern="^skip$"),
+                CallbackQueryHandler(edit_next_video, pattern="^media_next$"),
                 MessageHandler(filters.VIDEO, edit_got_video),
             ],
         },

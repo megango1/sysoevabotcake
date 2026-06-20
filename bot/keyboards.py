@@ -73,6 +73,14 @@ def skip_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⏭ Пропустити", callback_data="skip")]])
 
 
+def media_collect_keyboard(count: int, media_type: str = "фото") -> InlineKeyboardMarkup:
+    if count == 0:
+        label = "⏭ Пропустити"
+    else:
+        label = f"✅ Далі ({count} {media_type} додано)"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data="media_next")]])
+
+
 # ── Admin keyboards ───────────────────────────────────────────────────────────
 
 def admin_main_keyboard() -> InlineKeyboardMarkup:
