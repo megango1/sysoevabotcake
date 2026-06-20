@@ -30,6 +30,7 @@ from database import (
     grant_access, revoke_access, get_all_users, get_stats, get_access_until, ADMIN_ID, ADMIN_IDS,
     add_section, get_subsections, get_subsection,
     update_section, delete_section, get_all_sections,
+    get_users_to_notify, mark_notified,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
@@ -902,11 +903,55 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+# ── Subscription reminders ────────────────────────────────────────────────────
+
+import asyncio as _asyncio
+
+async def _send_reminders(bot) -> None:
+    """Check and send reminders at 7d, 3d, 24h before expiry."""
+    reminders = [
+        (7, "notified_7d", "7 днів"),
+        (3, "notified_3d", "3 дні"),
+        (1, "notified_1d", "24 години"),
+    ]
+    for days, flag_col, label in reminders:
+        users = await get_users_to_notify(days, flag_col)
+        for user in users:
+            try:
+                await bot.send_message(
+                    chat_id=user["user_id"],
+                    text=(
+                        f"⏰ <b>Нагадування про підписку</b>\n\n"
+                        f"Ваша підписка закінчується через <b>{label}</b>!\n\n"
+                        f"Щоб не втратити доступ до матеріалів — оформіть нову підписку."
+                    ),
+                    parse_mode="HTML",
+                    protect_content=True,
+                    reply_markup=payment_keyboard(),
+                )
+                await mark_notified(user["user_id"], flag_col)
+                logger.info("Sent %s reminder to user %s", label, user["user_id"])
+            except Exception as e:
+                logger.error("Failed to send reminder to user %s: %s", user["user_id"], e)
+
+
+async def _reminder_loop(bot) -> None:
+    """Background loop: check for reminders every hour."""
+    await _asyncio.sleep(60)
+    while True:
+        try:
+            await _send_reminders(bot)
+        except Exception as e:
+            logger.error("Reminder loop error: %s", e)
+        await _asyncio.sleep(3600)
+
+
 # ── App setup ─────────────────────────────────────────────────────────────────
 
 async def post_init(application: Application):
     await init_db()
     logger.info("Supabase ініціалізовано.")
+    _asyncio.create_task(_reminder_loop(application.bot))
 
 
 def main():
