@@ -35,7 +35,8 @@ from keyboards import (
     contact_keyboard, cakes_submenu_keyboard, admin_main_keyboard,
     admin_subsections_menu_keyboard, admin_sections_pick_keyboard,
     admin_users_keyboard, admin_revoke_users_keyboard, admin_sections_list_keyboard,
-    subsections_keyboard, choose_parent_keyboard, skip_keyboard, media_collect_keyboard,
+    subsections_keyboard, choose_parent_keyboard, skip_keyboard, media_collect_keyboard, cancel_keyboard,
+    contact_inline_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
 
@@ -112,8 +113,9 @@ async def add_chose_parent(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data["new_section"] = {"parent_key": parent_key}
     label = ALL_SECTION_LABELS.get(parent_key, parent_key)
     await query.edit_message_text(
-        f"✅ Розділ: <b>{label}</b>\n\n✏️ Напиши <b>назву кнопки</b> (наприклад: Медовик):",
+        f"✅ Розділ: <b>{label}</b>\n\n✏️ Напиши <b>назву кнопки</b> (наприклад: Медівник):",
         parse_mode="HTML",
+        reply_markup=cancel_keyboard("add_cancel"),
     )
     return ASK_TITLE
 
@@ -609,7 +611,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         await update.message.reply_html(msg, reply_markup=main_menu_keyboard(True))
     elif text == "📩 Зв'язок з автором":
-        await update.message.reply_html(TEXTS["contact_author"], reply_markup=main_menu_keyboard(True))
+        await update.message.reply_html(TEXTS["contact_author"], reply_markup=contact_inline_keyboard())
     else:
         await update.message.reply_html(
             TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
@@ -700,26 +702,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"*{label}*\n\n{content}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
-        sent_media = False
-        if photos:
-            if len(photos) == 1:
-                await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="Markdown")
+        media_items = (
+            [InputMediaPhoto(media=fid) for fid in photos] +
+            [InputMediaVideo(media=fid) for fid in videos]
+        )
+
+        if media_items:
+            media_items[0].caption = caption
+            media_items[0].parse_mode = "Markdown"
+            if len(media_items) == 1 and photos:
+                await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="Markdown", reply_markup=kb)
+            elif len(media_items) == 1 and videos:
+                await query.message.reply_video(video=videos[0], caption=caption, parse_mode="Markdown", reply_markup=kb)
             else:
-                media_group = [InputMediaPhoto(media=fid) for fid in photos]
-                media_group[0] = InputMediaPhoto(media=photos[0], caption=caption, parse_mode="Markdown")
-                await query.message.reply_media_group(media=media_group)
-            sent_media = True
-        if videos:
-            for i, vfid in enumerate(videos):
-                await query.message.reply_video(
-                    video=vfid,
-                    caption=(caption if not sent_media and i == 0 else None),
-                    parse_mode="Markdown" if not sent_media and i == 0 else None,
-                    reply_markup=(kb if i == len(videos) - 1 and not photos else None),
-                )
-            sent_media = True
-        if sent_media:
-            if photos and not videos:
+                await query.message.reply_media_group(media=media_items)
                 await query.message.reply_text("⬆️", reply_markup=kb)
             await query.delete_message()
         else:

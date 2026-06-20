@@ -44,6 +44,14 @@ def back_keyboard(callback_data: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=callback_data)]])
 
 
+def cancel_keyboard(callback_data: str = "add_cancel") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Скасувати", callback_data=callback_data)]])
+
+
+def contact_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Написати @ksysha_sysoeva", url="https://t.me/ksysha_sysoeva")]])
+
+
 def payment_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
