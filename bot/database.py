@@ -95,14 +95,7 @@ async def grant_access(user_id: int, days: int = 30) -> None:
     db = get_db()
     access_until = (datetime.now(tz=timezone.utc) + timedelta(days=days)).isoformat()
     await _run(lambda: db.table("users").upsert(
-        {
-            "user_id": user_id,
-            "has_access": True,
-            "access_until": access_until,
-            "notified_7d": False,
-            "notified_3d": False,
-            "notified_1d": False,
-        },
+        {"user_id": user_id, "has_access": True, "access_until": access_until},
         on_conflict="user_id",
     ).execute())
 
@@ -187,34 +180,6 @@ async def get_stats() -> dict:
         "total_sections": total_sections,
         "active_sections": active_sections,
     }
-
-
-# ── Reminders ─────────────────────────────────────────────────────────────────
-
-async def get_users_to_notify(days: int, flag_col: str) -> list[dict]:
-    """Return users whose subscription expires in ~`days` days and haven't been notified yet."""
-    db = get_db()
-    now = datetime.now(tz=timezone.utc)
-    target = now + timedelta(days=days)
-    lower = (target - timedelta(hours=12)).isoformat()
-    upper = (target + timedelta(hours=12)).isoformat()
-    res = await _run(lambda: db.table("users")
-        .select("user_id, full_name, access_until")
-        .eq("has_access", True)
-        .eq(flag_col, False)
-        .gte("access_until", lower)
-        .lte("access_until", upper)
-        .execute())
-    return res.data or []
-
-
-async def mark_notified(user_id: int, flag_col: str) -> None:
-    """Mark a specific reminder as sent for a user."""
-    db = get_db()
-    await _run(lambda: db.table("users")
-        .update({flag_col: True})
-        .eq("user_id", user_id)
-        .execute())
 
 
 # ── Sections ──────────────────────────────────────────────────────────────────

@@ -30,7 +30,6 @@ from database import (
     grant_access, revoke_access, get_all_users, get_stats, get_access_until, ADMIN_ID, ADMIN_IDS,
     add_section, get_subsections, get_subsection,
     update_section, delete_section, get_all_sections,
-    get_users_to_notify, mark_notified,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
@@ -903,36 +902,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
-# ── Subscription reminders ────────────────────────────────────────────────────
-
-async def check_subscription_reminders(context: ContextTypes.DEFAULT_TYPE):
-    """Run every hour — send reminders at 7d, 3d, 24h before expiry."""
-    reminders = [
-        (7, "notified_7d", "7 днів"),
-        (3, "notified_3d", "3 дні"),
-        (1, "notified_1d", "24 години"),
-    ]
-    for days, flag_col, label in reminders:
-        users = await get_users_to_notify(days, flag_col)
-        for user in users:
-            try:
-                await context.bot.send_message(
-                    chat_id=user["user_id"],
-                    text=(
-                        f"⏰ <b>Нагадування про підписку</b>\n\n"
-                        f"Ваша підписка закінчується через <b>{label}</b>!\n\n"
-                        f"Щоб не втратити доступ до матеріалів — оформіть нову підписку."
-                    ),
-                    parse_mode="HTML",
-                    protect_content=True,
-                    reply_markup=payment_keyboard(),
-                )
-                await mark_notified(user["user_id"], flag_col)
-                logger.info("Sent %s reminder to user %s", label, user["user_id"])
-            except Exception as e:
-                logger.error("Failed to send reminder to user %s: %s", user["user_id"], e)
-
-
 # ── App setup ─────────────────────────────────────────────────────────────────
 
 async def post_init(application: Application):
@@ -1034,8 +1003,6 @@ def main():
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    app.job_queue.run_repeating(check_subscription_reminders, interval=3600, first=60)
 
     logger.info("Бот запущено!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
