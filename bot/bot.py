@@ -704,40 +704,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"<b>{html.escape(label)}</b>\n\n{html.escape(content)}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
-        media_items = (
-            [InputMediaPhoto(media=fid) for fid in photos] +
-            [InputMediaVideo(media=fid) for fid in videos]
-        )
-
-        CAPTION_LIMIT = 950
-        short_caption = caption if len(caption) <= CAPTION_LIMIT else f"<b>{html.escape(label)}</b>"
-        needs_text = len(caption) > CAPTION_LIMIT
+        has_media = bool(photos or videos)
 
         try:
-            if media_items:
-                if len(media_items) == 1 and photos:
-                    await query.message.reply_photo(photo=photos[0], caption=short_caption, parse_mode="HTML")
-                elif len(media_items) == 1 and videos:
-                    await query.message.reply_video(video=videos[0], caption=short_caption, parse_mode="HTML")
-                else:
-                    for item in media_items:
-                        item.caption = None
-                        item.parse_mode = None
-                    await query.message.reply_media_group(media=media_items)
-                if needs_text:
-                    await query.message.reply_html(caption, reply_markup=kb)
-                else:
-                    await query.message.reply_html("⬆️", reply_markup=kb)
-                await query.delete_message()
-            else:
-                await query.edit_message_text(caption, parse_mode="HTML", reply_markup=kb)
+            await query.delete_message()
+        except Exception:
+            pass
+
+        try:
+            for fid in photos:
+                try:
+                    await query.message.reply_photo(photo=fid)
+                except Exception as e:
+                    logger.error("reply_photo failed for section %s: %s", section_id, e)
+            for fid in videos:
+                try:
+                    await query.message.reply_video(video=fid)
+                except Exception as e:
+                    logger.error("reply_video failed for section %s: %s", section_id, e)
+            await query.message.reply_html(caption, reply_markup=kb)
         except Exception as e:
             logger.error("Error sending section %s: %s", section_id, e)
-            try:
-                await query.message.reply_html(caption, reply_markup=kb)
-                await query.delete_message()
-            except Exception:
-                pass
+            await query.message.reply_html(caption, reply_markup=kb)
         return
 
     # Admin-only callbacks
