@@ -49,7 +49,7 @@ def cancel_keyboard(callback_data: str = "add_cancel") -> InlineKeyboardMarkup:
 
 
 def contact_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Написати @ksysha_sysoeva", url="https://t.me/ksysha_sysoeva")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Написати в чат", url="https://t.me/+y9frhgypLlw2NmYy")]])
 
 
 def payment_keyboard() -> InlineKeyboardMarkup:
