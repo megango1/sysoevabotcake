@@ -671,6 +671,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("back_section_"):
         parent_key = data[len("back_section_"):]
+
+        # delete media messages that were sent alongside the section text
+        chat_id = query.message.chat_id
+        for mid in context.user_data.pop("section_media_msgs", []):
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+            except Exception:
+                pass
+
         label = ALL_SECTION_LABELS.get(parent_key, "Розділ")
         subsections = await get_subsections(parent_key)
         if subsections:
@@ -709,22 +718,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+        media_msg_ids: list[int] = []
         try:
             if len(photos) == 1:
-                await query.message.reply_photo(photo=photos[0])
+                m = await query.message.reply_photo(photo=photos[0])
+                media_msg_ids.append(m.message_id)
             elif len(photos) > 1:
-                await query.message.reply_media_group(
+                msgs = await query.message.reply_media_group(
                     media=[InputMediaPhoto(media=fid) for fid in photos]
                 )
+                media_msg_ids.extend(m.message_id for m in msgs)
 
             if len(videos) == 1:
-                await query.message.reply_video(video=videos[0])
+                m = await query.message.reply_video(video=videos[0])
+                media_msg_ids.append(m.message_id)
             elif len(videos) > 1:
-                await query.message.reply_media_group(
+                msgs = await query.message.reply_media_group(
                     media=[InputMediaVideo(media=fid) for fid in videos]
                 )
+                media_msg_ids.extend(m.message_id for m in msgs)
 
-            await query.message.reply_html(caption, reply_markup=kb)
+            text_msg = await query.message.reply_html(caption, reply_markup=kb)
+            context.user_data["section_media_msgs"] = media_msg_ids
+            context.user_data["section_text_msg_id"] = text_msg.message_id
         except Exception as e:
             logger.error("Error sending section %s: %s", section_id, e)
             await query.message.reply_html(caption, reply_markup=kb)
