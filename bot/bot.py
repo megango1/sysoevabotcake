@@ -1,4 +1,5 @@
 import os
+import html
 import warnings
 import logging
 from dotenv import load_dotenv
@@ -349,7 +350,7 @@ async def edit_got_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data["edit_section"]["updates"]["content"] = update.message.text.strip()
     await update.message.reply_html(
         "📸 Надішли нове <b>фото</b> або пропусти (залишиться поточне):",
-        reply_markup=skip_keyboard(),
+        reply_markup=media_collect_keyboard(0, "фото"),
     )
     return EDIT_PHOTO
 
@@ -359,7 +360,7 @@ async def edit_skip_content(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.callback_query.edit_message_text(
         "📸 Надішли нове <b>фото</b> або пропусти (залишиться поточне):",
         parse_mode="HTML",
-        reply_markup=skip_keyboard(),
+        reply_markup=media_collect_keyboard(0, "фото"),
     )
     return EDIT_PHOTO
 
@@ -700,7 +701,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         video_raw = section.get("video_file_id") or ""
         photos = [p for p in photo_raw.split("|||") if p]
         videos = [v for v in video_raw.split("|||") if v]
-        caption = f"<b>{label}</b>\n\n{content}"
+        caption = f"<b>{html.escape(label)}</b>\n\n{html.escape(content)}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
         media_items = (
