@@ -709,23 +709,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InputMediaVideo(media=fid) for fid in videos]
         )
 
+        CAPTION_LIMIT = 950
+        short_caption = caption if len(caption) <= CAPTION_LIMIT else f"<b>{html.escape(label)}</b>"
+        needs_text = len(caption) > CAPTION_LIMIT
+
         try:
             if media_items:
-                media_items[0].caption = caption
-                media_items[0].parse_mode = "HTML"
                 if len(media_items) == 1 and photos:
-                    await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="HTML", reply_markup=kb)
+                    await query.message.reply_photo(photo=photos[0], caption=short_caption, parse_mode="HTML")
                 elif len(media_items) == 1 and videos:
-                    await query.message.reply_video(video=videos[0], caption=caption, parse_mode="HTML", reply_markup=kb)
+                    await query.message.reply_video(video=videos[0], caption=short_caption, parse_mode="HTML")
                 else:
+                    for item in media_items:
+                        item.caption = None
+                        item.parse_mode = None
                     await query.message.reply_media_group(media=media_items)
-                    await query.message.reply_text("⬆️", reply_markup=kb)
+                if needs_text:
+                    await query.message.reply_html(caption, reply_markup=kb)
+                else:
+                    await query.message.reply_html("⬆️", reply_markup=kb)
                 await query.delete_message()
             else:
                 await query.edit_message_text(caption, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
             logger.error("Error sending section %s: %s", section_id, e)
-            await query.edit_message_text(caption, parse_mode="HTML", reply_markup=kb)
+            try:
+                await query.message.reply_html(caption, reply_markup=kb)
+                await query.delete_message()
+            except Exception:
+                pass
         return
 
     # Admin-only callbacks
