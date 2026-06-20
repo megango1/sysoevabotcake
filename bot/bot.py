@@ -681,6 +681,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("sub_"):
+        await query.answer()
         if not has_access:
             await query.edit_message_text(
                 TEXTS["welcome_no_access"], parse_mode="HTML", reply_markup=payment_keyboard()
@@ -699,7 +700,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         video_raw = section.get("video_file_id") or ""
         photos = [p for p in photo_raw.split("|||") if p]
         videos = [v for v in video_raw.split("|||") if v]
-        caption = f"*{label}*\n\n{content}"
+        caption = f"<b>{label}</b>\n\n{content}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
         media_items = (
@@ -707,19 +708,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InputMediaVideo(media=fid) for fid in videos]
         )
 
-        if media_items:
-            media_items[0].caption = caption
-            media_items[0].parse_mode = "Markdown"
-            if len(media_items) == 1 and photos:
-                await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="Markdown", reply_markup=kb)
-            elif len(media_items) == 1 and videos:
-                await query.message.reply_video(video=videos[0], caption=caption, parse_mode="Markdown", reply_markup=kb)
+        try:
+            if media_items:
+                media_items[0].caption = caption
+                media_items[0].parse_mode = "HTML"
+                if len(media_items) == 1 and photos:
+                    await query.message.reply_photo(photo=photos[0], caption=caption, parse_mode="HTML", reply_markup=kb)
+                elif len(media_items) == 1 and videos:
+                    await query.message.reply_video(video=videos[0], caption=caption, parse_mode="HTML", reply_markup=kb)
+                else:
+                    await query.message.reply_media_group(media=media_items)
+                    await query.message.reply_text("⬆️", reply_markup=kb)
+                await query.delete_message()
             else:
-                await query.message.reply_media_group(media=media_items)
-                await query.message.reply_text("⬆️", reply_markup=kb)
-            await query.delete_message()
-        else:
-            await query.edit_message_text(caption, parse_mode="Markdown", reply_markup=kb)
+                await query.edit_message_text(caption, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.error("Error sending section %s: %s", section_id, e)
+            await query.edit_message_text(caption, parse_mode="HTML", reply_markup=kb)
         return
 
     # Admin-only callbacks
