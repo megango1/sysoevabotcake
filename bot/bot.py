@@ -704,24 +704,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"<b>{html.escape(label)}</b>\n\n{html.escape(content)}"
         kb = back_keyboard(f"back_section_{parent_key}")
 
-        has_media = bool(photos or videos)
-
         try:
             await query.delete_message()
         except Exception:
             pass
 
         try:
-            for fid in photos:
-                try:
-                    await query.message.reply_photo(photo=fid)
-                except Exception as e:
-                    logger.error("reply_photo failed for section %s: %s", section_id, e)
-            for fid in videos:
-                try:
-                    await query.message.reply_video(video=fid)
-                except Exception as e:
-                    logger.error("reply_video failed for section %s: %s", section_id, e)
+            if len(photos) == 1:
+                await query.message.reply_photo(photo=photos[0])
+            elif len(photos) > 1:
+                await query.message.reply_media_group(
+                    media=[InputMediaPhoto(media=fid) for fid in photos]
+                )
+
+            if len(videos) == 1:
+                await query.message.reply_video(video=videos[0])
+            elif len(videos) > 1:
+                await query.message.reply_media_group(
+                    media=[InputMediaVideo(media=fid) for fid in videos]
+                )
+
             await query.message.reply_html(caption, reply_markup=kb)
         except Exception as e:
             logger.error("Error sending section %s: %s", section_id, e)
