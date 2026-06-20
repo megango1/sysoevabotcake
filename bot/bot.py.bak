@@ -62,7 +62,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html(
         TEXTS["welcome_access"] if has_access else TEXTS["welcome_no_access"],
         reply_markup=main_menu_keyboard(has_access),
-        protect_content=True,
     )
 
 
@@ -71,8 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_html(
-        f"🆔 Твій Telegram ID: <code>{user.id}</code>",
-        protect_content=True,
+        f"🆔 Твій Telegram ID: <code>{user.id}</code>"
     )
 
 
@@ -497,8 +495,7 @@ async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a Telegram invoice to the user."""
     if not PAYMENTS_TOKEN:
         await update.message.reply_html(
-            TEXTS["payment_info"], reply_markup=payment_keyboard(),
-            protect_content=True,
+            TEXTS["payment_info"], reply_markup=payment_keyboard()
         )
         return
     await update.message.reply_invoice(
@@ -513,7 +510,6 @@ async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         need_name=False,
         need_phone_number=False,
         need_email=False,
-        protect_content=True,
     )
 
 
@@ -539,7 +535,6 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         f"Доступ відкрито на <b>{SUBSCRIPTION_DAYS} днів</b>.\n"
         f"Дякуємо за підтримку! 🎉",
         reply_markup=main_menu_keyboard(True),
-        protect_content=True,
     )
 
 
@@ -555,11 +550,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == "💳 Оплатити підписку":
             await send_invoice(update, context)
         elif text == "💰 Вартість":
-            await update.message.reply_html(TEXTS["price_info"], protect_content=True)
+            await update.message.reply_html(TEXTS["price_info"])
         else:
             await update.message.reply_html(
-                TEXTS["welcome_no_access"], reply_markup=main_menu_keyboard(False),
-                protect_content=True,
+                TEXTS["welcome_no_access"], reply_markup=main_menu_keyboard(False)
             )
         return
 
@@ -567,7 +561,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_html(
             "📖 <b>Рецепти</b>\n\nОбери підкатегорію:",
             reply_markup=cakes_submenu_keyboard(),
-            protect_content=True,
         )
     elif text in CAKE_SUBCAT_KEYS:
         parent_key = CAKE_SUBCAT_KEYS[text]
@@ -577,28 +570,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_html(
                 f"{label}\n\n🔜 Рецепти ще не додані.",
                 reply_markup=cakes_submenu_keyboard(),
-                protect_content=True,
             )
         else:
             await update.message.reply_text(
-                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key),
-                protect_content=True,
+                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
             )
     elif text == "◀️ Назад":
         await update.message.reply_html(
-            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True),
-            protect_content=True,
+            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
         )
     elif text in SECTION_KEYS:
         parent_key = SECTION_KEYS[text]
         label = SECTION_LABELS[parent_key]
         subsections = await get_subsections(parent_key)
         if not subsections:
-            await update.message.reply_html(f"{label}\n\n🔜 Підрозділи ще не додані.", protect_content=True)
+            await update.message.reply_html(f"{label}\n\n🔜 Підрозділи ще не додані.")
         else:
             await update.message.reply_text(
-                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key),
-                protect_content=True,
+                f"📂 {label}", reply_markup=subsections_keyboard(subsections, parent_key)
             )
     elif text == "📅 Моя підписка":
         from datetime import timezone as _tz
@@ -621,13 +610,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📅 <b>Моя підписка</b>\n\n"
                     f"❌ Підписка закінчилась: <b>{date_str}</b>"
                 )
-        await update.message.reply_html(msg, reply_markup=main_menu_keyboard(True), protect_content=True)
+        await update.message.reply_html(msg, reply_markup=main_menu_keyboard(True))
     elif text == "📩 Зв'язок з автором":
-        await update.message.reply_html(TEXTS["contact_author"], reply_markup=contact_inline_keyboard(), protect_content=True)
+        await update.message.reply_html(TEXTS["contact_author"], reply_markup=contact_inline_keyboard())
     else:
         await update.message.reply_html(
-            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True),
-            protect_content=True,
+            TEXTS["welcome_access"], reply_markup=main_menu_keyboard(True)
         )
 
 
@@ -733,31 +721,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         media_msg_ids: list[int] = []
         try:
             if len(photos) == 1:
-                m = await query.message.reply_photo(photo=photos[0], protect_content=True)
+                m = await query.message.reply_photo(photo=photos[0])
                 media_msg_ids.append(m.message_id)
             elif len(photos) > 1:
                 msgs = await query.message.reply_media_group(
-                    media=[InputMediaPhoto(media=fid) for fid in photos],
-                    protect_content=True,
+                    media=[InputMediaPhoto(media=fid) for fid in photos]
                 )
                 media_msg_ids.extend(m.message_id for m in msgs)
 
             if len(videos) == 1:
-                m = await query.message.reply_video(video=videos[0], protect_content=True)
+                m = await query.message.reply_video(video=videos[0])
                 media_msg_ids.append(m.message_id)
             elif len(videos) > 1:
                 msgs = await query.message.reply_media_group(
-                    media=[InputMediaVideo(media=fid) for fid in videos],
-                    protect_content=True,
+                    media=[InputMediaVideo(media=fid) for fid in videos]
                 )
                 media_msg_ids.extend(m.message_id for m in msgs)
 
-            text_msg = await query.message.reply_html(caption, reply_markup=kb, protect_content=True)
+            text_msg = await query.message.reply_html(caption, reply_markup=kb)
             context.user_data["section_media_msgs"] = media_msg_ids
             context.user_data["section_text_msg_id"] = text_msg.message_id
         except Exception as e:
             logger.error("Error sending section %s: %s", section_id, e)
-            await query.message.reply_html(caption, reply_markup=kb, protect_content=True)
+            await query.message.reply_html(caption, reply_markup=kb)
         return
 
     # Admin-only callbacks
