@@ -968,6 +968,7 @@ def main():
             CallbackQueryHandler(add_start, pattern="^admin_add_section$"),
         ],
         per_message=False,
+        allow_reentry=True,
         states={
             ASK_TITLE: [
                 CallbackQueryHandler(add_chose_parent, pattern="^add_to_"),
@@ -991,7 +992,10 @@ def main():
                 MessageHandler(filters.VIDEO, add_got_video),
             ],
         },
-        fallbacks=[CommandHandler("cancel", add_cancel)],
+        fallbacks=[
+            CommandHandler("cancel", add_cancel),
+            CallbackQueryHandler(add_cancel, pattern="^admin_back$"),
+        ],
         per_user=True,
     )
 
@@ -1001,6 +1005,7 @@ def main():
             CallbackQueryHandler(edit_start, pattern="^admin_edit_section$"),
         ],
         per_message=False,
+        allow_reentry=True,
         states={
             EDIT_PICK: [
                 CallbackQueryHandler(edit_picked, pattern="^edit_pick_\\d+$"),
@@ -1027,7 +1032,10 @@ def main():
                 MessageHandler(filters.VIDEO, edit_got_video),
             ],
         },
-        fallbacks=[CommandHandler("cancel", edit_cancel_handler)],
+        fallbacks=[
+            CommandHandler("cancel", edit_cancel_handler),
+            CallbackQueryHandler(edit_cancel_handler, pattern="^admin_back$"),
+        ],
         per_user=True,
     )
 
