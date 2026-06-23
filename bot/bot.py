@@ -861,7 +861,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 protect_content=True,
             )
         elif text == "💰 Вартість":
-            await update.message.reply_html(TEXTS["price_info"], protect_content=True)
+            await update.message.reply_html(
+                TEXTS["price_info"].format(price=get_price(), days=get_days()),
+                protect_content=True,
+            )
         else:
             await update.message.reply_html(
                 TEXTS["welcome_no_access"], reply_markup=main_menu_keyboard(False),
