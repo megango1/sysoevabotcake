@@ -97,6 +97,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📂 Підрозділи", callback_data="admin_subsections_menu")],
             [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
             [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton("💰 Платежі", callback_data="admin_payments")],
         ]
     )
 
@@ -140,6 +141,12 @@ def admin_revoke_users_keyboard(users: list[dict]) -> InlineKeyboardMarkup:
         buttons.append([InlineKeyboardButton(label, callback_data=f"revoke_user_{u['user_id']}")])
     buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_users")])
     return InlineKeyboardMarkup(buttons)
+
+
+def admin_payments_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+    )
 
 
 def admin_sections_list_keyboard(sections: list[dict]) -> InlineKeyboardMarkup:

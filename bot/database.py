@@ -217,6 +217,40 @@ async def mark_notified(user_id: int, flag_col: str) -> None:
         .execute())
 
 
+# ── Payments ──────────────────────────────────────────────────────────────────
+
+async def save_payment(
+    user_id: int,
+    full_name: str | None,
+    username: str | None,
+    amount_uah: float,
+    currency: str,
+    email: str | None,
+    days: int,
+) -> None:
+    db = get_db()
+    await _run(lambda: db.table("payments").insert({
+        "user_id": user_id,
+        "full_name": full_name,
+        "username": username,
+        "amount_uah": amount_uah,
+        "currency": currency,
+        "email": email,
+        "days": days,
+        "paid_at": datetime.now(tz=timezone.utc).isoformat(),
+    }).execute())
+
+
+async def get_recent_payments(limit: int = 20) -> list[dict]:
+    db = get_db()
+    res = await _run(lambda: db.table("payments")
+        .select("user_id, full_name, username, amount_uah, currency, email, days, paid_at")
+        .order("paid_at", desc=True)
+        .limit(limit)
+        .execute())
+    return res.data or []
+
+
 # ── Sections ──────────────────────────────────────────────────────────────────
 
 async def add_section(

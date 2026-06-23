@@ -37,6 +37,7 @@ from database import (
     add_section, get_subsections, get_subsection,
     update_section, delete_section, get_all_sections,
     get_users_to_notify, mark_notified,
+    save_payment, get_recent_payments,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
@@ -44,7 +45,7 @@ from keyboards import (
     admin_subsections_menu_keyboard, admin_sections_pick_keyboard,
     admin_users_keyboard, admin_revoke_users_keyboard, admin_sections_list_keyboard,
     subsections_keyboard, choose_parent_keyboard, skip_keyboard, media_collect_keyboard, cancel_keyboard,
-    contact_inline_keyboard,
+    contact_inline_keyboard, admin_payments_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
 
@@ -57,31 +58,6 @@ logger = logging.getLogger(__name__)
 
 # ── Checkbox fiscalization ─────────────────────────────────────────────────────
 
-async def _checkbox_get_token() -> str:
-    """Login to Checkbox and return JWT access token."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            f"{CHECKBOX_API}/cashier/signin",
-            json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
-        )
-        resp.raise_for_status()
-        return resp.json().get("access_token", "")
-
-
-async def _checkbox_ensure_shift(token: str) -> None:
-    """Set license key and open a shift if not already open."""
-    headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient(timeout=15) as client:
-        await client.post(
-            f"{CHECKBOX_API}/cashier/sign-in/license-key",
-            json={"license_key": CHECKBOX_LICENSE_KEY},
-            headers=headers,
-        )
-        shift_resp = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
-        if shift_resp.status_code not in (200, 201, 422):
-            shift_resp.raise_for_status()
-
-
 async def checkbox_issue_receipt(email: str, amount_uah: float, description: str) -> bool:
     """Issue a fiscal receipt via Checkbox and send it to the customer's email.
     Returns True on success, False if Checkbox is not configured or on error.
@@ -90,33 +66,77 @@ async def checkbox_issue_receipt(email: str, amount_uah: float, description: str
         logger.info("Checkbox not configured — skipping receipt.")
         return False
     try:
-        token = await _checkbox_get_token()
-        if not token:
-            logger.error("Checkbox: failed to obtain token.")
-            return False
-        await _checkbox_ensure_shift(token)
-        amount_kopecks = int(round(amount_uah * 100))
-        payload = {
-            "goods": [
-                {
-                    "good": {
-                        "code": "subscription_001",
-                        "name": description,
-                        "price": amount_kopecks,
-                    },
-                    "quantity": 1000,
-                }
-            ],
-            "payments": [{"type": "CASHLESS", "value": amount_kopecks}],
-            "delivery": {"email": email, "phones": []},
-        }
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
+            # Step 1: sign in with login/password → get cashier token
+            signin_resp = await client.post(
+                f"{CHECKBOX_API}/cashier/signin",
+                json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+            )
+            if signin_resp.status_code != 200:
+                logger.error(
+                    "Checkbox signin failed: %s %s",
+                    signin_resp.status_code, signin_resp.text,
+                )
+                return False
+            token = signin_resp.json().get("access_token", "")
+            if not token:
+                logger.error("Checkbox: empty token after signin.")
+                return False
+            headers = {"Authorization": f"Bearer {token}"}
+
+            # Step 2: bind to cash register via license key → may return a new token
+            lk_resp = await client.post(
+                f"{CHECKBOX_API}/cashier/sign-in/license-key",
+                json={"license_key": CHECKBOX_LICENSE_KEY},
+                headers=headers,
+            )
+            if lk_resp.status_code in (200, 201):
+                new_token = lk_resp.json().get("access_token", "")
+                if new_token:
+                    token = new_token
+                    headers = {"Authorization": f"Bearer {token}"}
+            else:
+                logger.warning(
+                    "Checkbox license-key sign-in: %s %s",
+                    lk_resp.status_code, lk_resp.text,
+                )
+
+            # Step 3: open shift (422 = already open — that's fine)
+            shift_resp = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+            if shift_resp.status_code not in (200, 201, 422):
+                logger.error(
+                    "Checkbox open shift failed: %s %s",
+                    shift_resp.status_code, shift_resp.text,
+                )
+                return False
+
+            # Step 4: create receipt
+            amount_kopecks = int(round(amount_uah * 100))
+            payload = {
+                "goods": [
+                    {
+                        "good": {
+                            "code": "subscription_001",
+                            "name": description,
+                            "price": amount_kopecks,
+                        },
+                        "quantity": 1000,
+                    }
+                ],
+                "payments": [{"type": "CASHLESS", "value": amount_kopecks}],
+                "delivery": {"email": email, "phones": []},
+            }
+            receipt_resp = await client.post(
                 f"{CHECKBOX_API}/receipts/sell",
                 json=payload,
-                headers={"Authorization": f"Bearer {token}"},
+                headers=headers,
             )
-            resp.raise_for_status()
+            if receipt_resp.status_code not in (200, 201):
+                logger.error(
+                    "Checkbox receipt failed: %s %s",
+                    receipt_resp.status_code, receipt_resp.text,
+                )
+                return False
             logger.info("Checkbox receipt issued for %s.", email)
             return True
     except Exception as exc:
@@ -625,6 +645,36 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         if payment.order_info and payment.order_info.email
         else None
     )
+    try:
+        await save_payment(
+            user_id=user.id,
+            full_name=user.full_name,
+            username=user.username,
+            amount_uah=amount_uah,
+            currency=payment.currency,
+            email=email,
+            days=SUBSCRIPTION_DAYS,
+        )
+    except Exception as exc:
+        logger.error("Failed to save payment record: %s", exc)
+
+    name_display = html.escape(user.full_name or user.username or str(user.id))
+    username_display = f" (@{html.escape(user.username)})" if user.username else ""
+    email_display = html.escape(email) if email else "не вказано"
+    notify_text = (
+        f"💰 <b>Нова оплата!</b>\n\n"
+        f"👤 {name_display}{username_display}\n"
+        f"🆔 <code>{user.id}</code>\n"
+        f"💳 <b>{amount_uah:.2f} {payment.currency}</b>\n"
+        f"📅 Підписка на {SUBSCRIPTION_DAYS} днів\n"
+        f"📧 Email: {email_display}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=notify_text, parse_mode="HTML")
+        except Exception as exc:
+            logger.warning("Could not notify admin %s: %s", admin_id, exc)
+
     if email:
         description = f"Підписка на {SUBSCRIPTION_DAYS} днів"
         receipt_ok = await checkbox_issue_receipt(email, amount_uah, description)
@@ -910,6 +960,47 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
                 reply_markup=admin_subsections_menu_keyboard(),
             )
+        return
+
+    if data == "admin_payments":
+        payments = await get_recent_payments(limit=20)
+        if not payments:
+            await query.edit_message_text(
+                "💰 <b>Платежі</b>\n\nПлатежів ще немає.",
+                parse_mode="HTML",
+                reply_markup=back_keyboard("admin_back"),
+            )
+            return
+        from datetime import datetime as _dt, timezone as _tz
+        lines = []
+        total = sum(float(p["amount_uah"]) for p in payments)
+        for p in payments:
+            name = p.get("full_name") or p.get("username") or str(p["user_id"])
+            uname = f" (@{p['username']})" if p.get("username") else ""
+            email = p.get("email") or "—"
+            amount = float(p["amount_uah"])
+            paid_at_raw = p.get("paid_at", "")
+            try:
+                dt = _dt.fromisoformat(paid_at_raw)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_tz.utc)
+                date_str = dt.strftime("%d.%m.%Y %H:%M")
+            except Exception:
+                date_str = paid_at_raw[:16] if paid_at_raw else "—"
+            lines.append(
+                f"📅 <b>{date_str}</b>\n"
+                f"👤 {html.escape(name)}{html.escape(uname)}\n"
+                f"💳 {amount:.2f} UAH · 📧 {html.escape(email)}"
+            )
+        text = (
+            f"💰 <b>Останні платежі</b> (макс. 20)\n"
+            f"Загалом: <b>{total:.2f} UAH</b>\n\n"
+            + "\n\n".join(lines)
+        )
+        await query.edit_message_text(
+            text, parse_mode="HTML",
+            reply_markup=back_keyboard("admin_back"),
+        )
         return
 
     if data == "admin_stats":

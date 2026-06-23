@@ -27,6 +27,20 @@ create table if not exists sections (
 -- Index for fast parent_key lookups
 create index if not exists sections_parent_key_idx on sections (parent_key);
 
+create table if not exists payments (
+    id          serial primary key,
+    user_id     bigint not null,
+    full_name   text,
+    username    text,
+    amount_uah  numeric(10,2) not null,
+    currency    text not null default 'UAH',
+    email       text,
+    days        int not null,
+    paid_at     timestamptz not null default now()
+);
+
+create index if not exists payments_paid_at_idx on payments (paid_at desc);
+
 -- ─── Run this if the users table already exists ───────────────────────────────
 -- alter table users add column if not exists notified_7d boolean not null default false;
 -- alter table users add column if not exists notified_3d boolean not null default false;
