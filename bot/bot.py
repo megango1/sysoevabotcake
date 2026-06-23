@@ -58,68 +58,82 @@ logger = logging.getLogger(__name__)
 
 # ── Checkbox fiscalization ─────────────────────────────────────────────────────
 
+async def _checkbox_get_token_and_open_shift(client: httpx.AsyncClient) -> str | None:
+    """
+    Try two auth flows and return a valid token with an open shift, or None on failure.
+    Flow A: license-key direct signin (no password needed).
+    Flow B: login/password → license-key binding.
+    """
+    # ── Flow A: direct license-key signin ──────────────────────────────────────
+    if CHECKBOX_LICENSE_KEY:
+        lk_resp = await client.post(
+            f"{CHECKBOX_API}/cashier/signin/license-key",
+            json={"license_key": CHECKBOX_LICENSE_KEY},
+        )
+        if lk_resp.status_code in (200, 201):
+            token = lk_resp.json().get("access_token", "")
+            if token:
+                logger.info("Checkbox: Flow A (direct license-key signin) succeeded.")
+                headers = {"Authorization": f"Bearer {token}"}
+                s = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+                if s.status_code in (200, 201, 422):
+                    return token
+                logger.warning("Checkbox Flow A: shift open failed %s %s", s.status_code, s.text)
+        else:
+            logger.warning("Checkbox Flow A: %s %s", lk_resp.status_code, lk_resp.text)
+
+    # ── Flow B: login/password → bind license key ───────────────────────────────
+    if CHECKBOX_LOGIN and CHECKBOX_PASSWORD:
+        r = await client.post(
+            f"{CHECKBOX_API}/cashier/signin",
+            json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+        )
+        if r.status_code != 200:
+            logger.error("Checkbox Flow B signin failed: %s %s", r.status_code, r.text)
+            return None
+        token = r.json().get("access_token", "")
+        if not token:
+            return None
+        headers = {"Authorization": f"Bearer {token}"}
+
+        if CHECKBOX_LICENSE_KEY:
+            lk = await client.post(
+                f"{CHECKBOX_API}/cashier/signin/license-key",
+                json={"license_key": CHECKBOX_LICENSE_KEY},
+                headers=headers,
+            )
+            if lk.status_code in (200, 201):
+                new_tok = lk.json().get("access_token", "")
+                if new_tok:
+                    token = new_tok
+                    headers = {"Authorization": f"Bearer {token}"}
+                logger.info("Checkbox Flow B: license-key bound.")
+            else:
+                logger.warning("Checkbox Flow B: license-key bind %s %s", lk.status_code, lk.text)
+
+        s = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+        if s.status_code in (200, 201, 422):
+            logger.info("Checkbox: Flow B succeeded.")
+            return token
+        logger.error("Checkbox Flow B: shift open failed %s %s", s.status_code, s.text)
+
+    return None
+
+
 async def checkbox_issue_receipt(email: str, amount_uah: float, description: str) -> bool:
     """Issue a fiscal receipt via Checkbox and send it to the customer's email.
     Returns True on success, False if Checkbox is not configured or on error.
     """
-    if not all([CHECKBOX_LOGIN, CHECKBOX_PASSWORD, CHECKBOX_LICENSE_KEY]):
+    if not CHECKBOX_LICENSE_KEY and not all([CHECKBOX_LOGIN, CHECKBOX_PASSWORD]):
         logger.info("Checkbox not configured — skipping receipt.")
         return False
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            # Step 1: sign in with login/password → get cashier token
-            signin_resp = await client.post(
-                f"{CHECKBOX_API}/cashier/signin",
-                json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
-            )
-            if signin_resp.status_code != 200:
-                logger.error(
-                    "Checkbox signin failed: %s %s",
-                    signin_resp.status_code, signin_resp.text,
-                )
-                return False
-            token = signin_resp.json().get("access_token", "")
+            token = await _checkbox_get_token_and_open_shift(client)
             if not token:
-                logger.error("Checkbox: empty token after signin.")
+                logger.error("Checkbox: could not obtain valid token with open shift.")
                 return False
             headers = {"Authorization": f"Bearer {token}"}
-
-            # Step 2: bind to cash register via license key → may return a new token
-            # Some test registers don't support this endpoint — non-fatal, we continue anyway
-            for lk_endpoint in [
-                f"{CHECKBOX_API}/cashier/signin/license-key",
-                f"{CHECKBOX_API}/cashier/sign-in/license-key",
-            ]:
-                lk_resp = await client.post(
-                    lk_endpoint,
-                    json={"license_key": CHECKBOX_LICENSE_KEY},
-                    headers=headers,
-                )
-                if lk_resp.status_code in (200, 201):
-                    new_token = lk_resp.json().get("access_token", "")
-                    if new_token:
-                        token = new_token
-                        headers = {"Authorization": f"Bearer {token}"}
-                    logger.info("Checkbox license-key binding: OK via %s", lk_endpoint)
-                    break
-                logger.warning(
-                    "Checkbox license-key sign-in (%s): %s %s",
-                    lk_endpoint, lk_resp.status_code, lk_resp.text,
-                )
-
-            # Step 3: open shift (422 = already open — that's fine)
-            shift_resp = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
-            if shift_resp.status_code == 422:
-                # Shift already open — get the current shift to confirm token is bound
-                logger.info("Checkbox: shift already open, fetching current shift.")
-            elif shift_resp.status_code not in (200, 201):
-                logger.error(
-                    "Checkbox open shift failed: %s %s",
-                    shift_resp.status_code, shift_resp.text,
-                )
-                return False
-
-            # Step 4: create receipt
             amount_kopecks = int(round(amount_uah * 100))
             payload = {
                 "goods": [
@@ -202,80 +216,83 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
     test_email = args[0] if args else None
 
     lines: list[str] = ["🔍 <b>Тест Checkbox API</b>\n"]
-
-    # Config check
-    missing = [v for v, k in [
-        ("CHECKBOX_LOGIN", CHECKBOX_LOGIN),
-        ("CHECKBOX_PASSWORD", CHECKBOX_PASSWORD),
-        ("CHECKBOX_LICENSE_KEY", CHECKBOX_LICENSE_KEY),
-    ] if not k]
-    if missing:
-        lines.append(f"❌ Не заповнені змінні: <code>{', '.join(missing)}</code>")
-        await update.message.reply_html("\n".join(lines))
-        return
-    lines.append(f"✅ Конфіг: всі змінні заповнені")
-    lines.append(f"   LOGIN: <code>{CHECKBOX_LOGIN}</code>")
-    lines.append(f"   KEY:   <code>{CHECKBOX_LICENSE_KEY[:8]}…</code>\n")
+    lines.append(f"   LOGIN: <code>{CHECKBOX_LOGIN or '—'}</code>")
+    lines.append(f"   KEY:   <code>{(CHECKBOX_LICENSE_KEY[:8] + '…') if CHECKBOX_LICENSE_KEY else '—'}</code>\n")
 
     async with httpx.AsyncClient(timeout=20) as client:
-        # Step 1: signin
+        token: str | None = None
+
+        # ── Flow A: direct license-key signin (no password) ───────────────────
+        lines.append("<b>Флоу A</b> (ліцензійний ключ без логіну):")
         try:
             r = await client.post(
-                f"{CHECKBOX_API}/cashier/signin",
-                json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+                f"{CHECKBOX_API}/cashier/signin/license-key",
+                json={"license_key": CHECKBOX_LICENSE_KEY},
             )
-            if r.status_code == 200:
+            if r.status_code in (200, 201):
                 token = r.json().get("access_token", "")
-                lines.append(f"✅ Крок 1 — Вхід касира: OK (токен отримано)")
+                lines.append(f"  ✅ Вхід по ключу: OK")
             else:
-                lines.append(f"❌ Крок 1 — Вхід касира: {r.status_code}\n<code>{r.text[:300]}</code>")
-                await update.message.reply_html("\n".join(lines))
-                return
+                lines.append(f"  ❌ Вхід по ключу: {r.status_code} <code>{r.text[:200]}</code>")
         except Exception as e:
-            lines.append(f"❌ Крок 1 — Вхід касира: помилка мережі\n<code>{e}</code>")
+            lines.append(f"  ❌ Вхід по ключу: помилка <code>{e}</code>")
+
+        # ── Flow B: login/password → license-key bind ─────────────────────────
+        if not token:
+            lines.append("\n<b>Флоу B</b> (логін/пароль → ключ):")
+            try:
+                r = await client.post(
+                    f"{CHECKBOX_API}/cashier/signin",
+                    json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+                )
+                if r.status_code == 200:
+                    token = r.json().get("access_token", "")
+                    lines.append(f"  ✅ Вхід касира: OK")
+                    headers_b = {"Authorization": f"Bearer {token}"}
+                    lk = await client.post(
+                        f"{CHECKBOX_API}/cashier/signin/license-key",
+                        json={"license_key": CHECKBOX_LICENSE_KEY},
+                        headers=headers_b,
+                    )
+                    if lk.status_code in (200, 201):
+                        new_tok = lk.json().get("access_token", "")
+                        if new_tok:
+                            token = new_tok
+                        lines.append(f"  ✅ Прив'язка до каси: OK")
+                    else:
+                        lines.append(f"  ⚠️ Прив'язка до каси: {lk.status_code} <code>{lk.text[:200]}</code>")
+                else:
+                    lines.append(f"  ❌ Вхід касира: {r.status_code} <code>{r.text[:200]}</code>")
+                    token = None
+            except Exception as e:
+                lines.append(f"  ❌ Flow B помилка: <code>{e}</code>")
+                token = None
+
+        if not token:
+            lines.append("\n❌ <b>Не вдалось отримати токен. Перевірте дані в .env</b>")
             await update.message.reply_html("\n".join(lines))
             return
 
         headers = {"Authorization": f"Bearer {token}"}
 
-        # Step 2: license key (non-fatal — test registers may return 404)
-        try:
-            lk_bound = False
-            for lk_url in [
-                f"{CHECKBOX_API}/cashier/signin/license-key",
-                f"{CHECKBOX_API}/cashier/sign-in/license-key",
-            ]:
-                r = await client.post(lk_url, json={"license_key": CHECKBOX_LICENSE_KEY}, headers=headers)
-                if r.status_code in (200, 201):
-                    new_token = r.json().get("access_token", "")
-                    if new_token:
-                        token = new_token
-                        headers = {"Authorization": f"Bearer {token}"}
-                    lines.append(f"✅ Крок 2 — Прив'язка до каси: OK")
-                    lk_bound = True
-                    break
-            if not lk_bound:
-                lines.append(f"⚠️ Крок 2 — Прив'язка до каси: 404 (пропускаємо, тестова каса)")
-        except Exception as e:
-            lines.append(f"⚠️ Крок 2 — Прив'язка до каси: помилка (пропускаємо)\n<code>{e}</code>")
-
-        # Step 3: shift
+        # ── Shift ─────────────────────────────────────────────────────────────
+        lines.append("")
         try:
             r = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
             if r.status_code in (200, 201):
-                lines.append(f"✅ Крок 3 — Відкриття зміни: відкрито нову зміну")
+                lines.append(f"✅ Зміна: відкрито нову")
             elif r.status_code == 422:
-                lines.append(f"✅ Крок 3 — Відкриття зміни: зміна вже відкрита (OK)")
+                lines.append(f"✅ Зміна: вже відкрита (OK)")
             else:
-                lines.append(f"❌ Крок 3 — Відкриття зміни: {r.status_code}\n<code>{r.text[:300]}</code>")
+                lines.append(f"❌ Зміна: {r.status_code} <code>{r.text[:300]}</code>")
                 await update.message.reply_html("\n".join(lines))
                 return
         except Exception as e:
-            lines.append(f"❌ Крок 3 — Відкриття зміни: помилка\n<code>{e}</code>")
+            lines.append(f"❌ Зміна: помилка <code>{e}</code>")
             await update.message.reply_html("\n".join(lines))
             return
 
-        # Step 4: test receipt (only if email provided)
+        # ── Receipt ───────────────────────────────────────────────────────────
         if test_email:
             try:
                 payload = {
@@ -286,17 +303,13 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
                     "payments": [{"type": "CASHLESS", "value": 100}],
                     "delivery": {"email": test_email, "phones": []},
                 }
-                r = await client.post(
-                    f"{CHECKBOX_API}/receipts/sell",
-                    json=payload,
-                    headers=headers,
-                )
+                r = await client.post(f"{CHECKBOX_API}/receipts/sell", json=payload, headers=headers)
                 if r.status_code in (200, 201):
-                    lines.append(f"✅ Крок 4 — Тестовий чек: надіслано на <code>{test_email}</code>!")
+                    lines.append(f"✅ Чек: надіслано на <code>{test_email}</code> 🎉")
                 else:
-                    lines.append(f"❌ Крок 4 — Тестовий чек: {r.status_code}\n<code>{r.text[:400]}</code>")
+                    lines.append(f"❌ Чек: {r.status_code}\n<code>{r.text[:400]}</code>")
             except Exception as e:
-                lines.append(f"❌ Крок 4 — Тестовий чек: помилка\n<code>{e}</code>")
+                lines.append(f"❌ Чек: помилка <code>{e}</code>")
         else:
             lines.append(f"\n💡 Щоб надіслати тестовий чек:\n/test_checkbox ваш@email.com")
 
