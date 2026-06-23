@@ -116,14 +116,9 @@ async def _checkbox_get_token_and_open_shift(client: httpx.AsyncClient) -> str |
             logger.info("Checkbox: Flow B succeeded, new shift opened.")
             return token
         if s.status_code == 422:
-            # Shift exists but may be bound to a different session — close and reopen
-            logger.info("Checkbox: shift already open, closing and reopening.")
-            await client.post(f"{CHECKBOX_API}/shifts/close", headers=headers)
-            s2 = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
-            if s2.status_code in (200, 201, 422):
-                logger.info("Checkbox: Flow B succeeded after shift reopen.")
-                return token
-            logger.error("Checkbox Flow B: shift reopen failed %s %s", s2.status_code, s2.text)
+            # Shift already open — this is fine, just use the existing token
+            logger.info("Checkbox: shift already open — using existing shift.")
+            return token
         else:
             logger.error("Checkbox Flow B: shift open failed %s %s", s.status_code, s.text)
 
@@ -297,16 +292,7 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
             if r.status_code in (200, 201):
                 lines.append(f"✅ Зміна: відкрито нову")
             elif r.status_code == 422:
-                lines.append(f"⚠️ Зміна: вже відкрита — закриваємо і відкриваємо знову…")
-                close_r = await client.post(f"{CHECKBOX_API}/shifts/close", headers=headers)
-                lines.append(f"   Закриття: {close_r.status_code}")
-                r2 = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
-                if r2.status_code in (200, 201, 422):
-                    lines.append(f"✅ Зміна: відкрито свіжу (OK)")
-                else:
-                    lines.append(f"❌ Зміна: не вдалось відкрити — {r2.status_code} <code>{r2.text[:200]}</code>")
-                    await update.message.reply_html("\n".join(lines))
-                    return
+                lines.append(f"✅ Зміна: вже відкрита (використовуємо існуючу)")
             else:
                 lines.append(f"❌ Зміна: {r.status_code} <code>{r.text[:300]}</code>")
                 await update.message.reply_html("\n".join(lines))
@@ -321,7 +307,12 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
             try:
                 payload = {
                     "goods": [{
-                        "good": {"code": "test_001", "name": "Тест підписки", "price": 100},
+                        "good": {
+                            "code": "test_001",
+                            "name": "Тест підписки",
+                            "price": 100,
+                            "unit_code": "PIECE",
+                        },
                         "quantity": 1000,
                     }],
                     "payments": [{"type": "CASHLESS", "value": 100}],
