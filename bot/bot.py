@@ -112,10 +112,20 @@ async def _checkbox_get_token_and_open_shift(client: httpx.AsyncClient) -> str |
                 logger.warning("Checkbox Flow B: license-key bind %s %s", lk.status_code, lk.text)
 
         s = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
-        if s.status_code in (200, 201, 422):
-            logger.info("Checkbox: Flow B succeeded.")
+        if s.status_code in (200, 201):
+            logger.info("Checkbox: Flow B succeeded, new shift opened.")
             return token
-        logger.error("Checkbox Flow B: shift open failed %s %s", s.status_code, s.text)
+        if s.status_code == 422:
+            # Shift exists but may be bound to a different session — close and reopen
+            logger.info("Checkbox: shift already open, closing and reopening.")
+            await client.post(f"{CHECKBOX_API}/shifts/close", headers=headers)
+            s2 = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+            if s2.status_code in (200, 201, 422):
+                logger.info("Checkbox: Flow B succeeded after shift reopen.")
+                return token
+            logger.error("Checkbox Flow B: shift reopen failed %s %s", s2.status_code, s2.text)
+        else:
+            logger.error("Checkbox Flow B: shift open failed %s %s", s.status_code, s.text)
 
     return None
 
@@ -282,7 +292,16 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
             if r.status_code in (200, 201):
                 lines.append(f"✅ Зміна: відкрито нову")
             elif r.status_code == 422:
-                lines.append(f"✅ Зміна: вже відкрита (OK)")
+                lines.append(f"⚠️ Зміна: вже відкрита — закриваємо і відкриваємо знову…")
+                close_r = await client.post(f"{CHECKBOX_API}/shifts/close", headers=headers)
+                lines.append(f"   Закриття: {close_r.status_code}")
+                r2 = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+                if r2.status_code in (200, 201, 422):
+                    lines.append(f"✅ Зміна: відкрито свіжу (OK)")
+                else:
+                    lines.append(f"❌ Зміна: не вдалось відкрити — {r2.status_code} <code>{r2.text[:200]}</code>")
+                    await update.message.reply_html("\n".join(lines))
+                    return
             else:
                 lines.append(f"❌ Зміна: {r.status_code} <code>{r.text[:300]}</code>")
                 await update.message.reply_html("\n".join(lines))
