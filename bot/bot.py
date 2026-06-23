@@ -285,6 +285,33 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
 
         headers = {"Authorization": f"Bearer {token}"}
 
+        # ── Cashier info & PRRO ───────────────────────────────────────────────
+        try:
+            me = await client.get(f"{CHECKBOX_API}/cashier/me", headers=headers)
+            if me.status_code == 200:
+                me_data = me.json()
+                cashier_name = me_data.get("full_name") or me_data.get("login") or "—"
+                prro = me_data.get("prro") or {}
+                prro_id = prro.get("id", "—")
+                prro_key = prro.get("license_key", "—")
+                prro_status = prro.get("status", "—")
+                lines.append(
+                    f"\n👤 <b>Касир:</b> {cashier_name}\n"
+                    f"🏦 <b>ПРРО ID:</b> <code>{prro_id}</code>\n"
+                    f"🔑 <b>ПРРО ключ:</b> <code>{prro_key}</code>\n"
+                    f"📊 <b>Статус ПРРО:</b> {prro_status}"
+                )
+                if prro_key and prro_key != "—" and prro_key != CHECKBOX_LICENSE_KEY:
+                    lines.append(
+                        f"\n⚠️ <b>Ключ у .env відрізняється від ПРРО!</b>\n"
+                        f"У .env: <code>{CHECKBOX_LICENSE_KEY}</code>\n"
+                        f"Має бути: <code>{prro_key}</code>"
+                    )
+            else:
+                lines.append(f"\n⚠️ /cashier/me: {me.status_code} <code>{me.text[:150]}</code>")
+        except Exception as e:
+            lines.append(f"\n⚠️ /cashier/me помилка: <code>{e}</code>")
+
         # ── Shift ─────────────────────────────────────────────────────────────
         lines.append("")
         try:
