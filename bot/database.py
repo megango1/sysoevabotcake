@@ -251,6 +251,58 @@ async def get_recent_payments(limit: int = 20) -> list[dict]:
     return res.data or []
 
 
+# ── Payment requests (manual screenshot approval) ─────────────────────────────
+
+async def save_payment_request(
+    user_id: int,
+    username: str | None,
+    full_name: str | None,
+    screenshot_file_id: str,
+) -> None:
+    db = get_db()
+    now = datetime.now(tz=timezone.utc).isoformat()
+    await _run(lambda: db.table("payment_requests").upsert(
+        {
+            "user_id": user_id,
+            "username": username,
+            "full_name": full_name,
+            "screenshot_file_id": screenshot_file_id,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+        },
+        on_conflict="user_id",
+    ).execute())
+
+
+async def get_pending_requests() -> list[dict]:
+    db = get_db()
+    res = await _run(lambda: db.table("payment_requests")
+        .select("user_id, username, full_name, screenshot_file_id, status, created_at")
+        .eq("status", "pending")
+        .order("created_at", desc=False)
+        .execute())
+    return res.data or []
+
+
+async def update_payment_request_status(user_id: int, status: str) -> None:
+    db = get_db()
+    await _run(lambda: db.table("payment_requests")
+        .update({"status": status, "updated_at": datetime.now(tz=timezone.utc).isoformat()})
+        .eq("user_id", user_id)
+        .execute())
+
+
+async def get_all_payment_requests(limit: int = 30) -> list[dict]:
+    db = get_db()
+    res = await _run(lambda: db.table("payment_requests")
+        .select("user_id, username, full_name, status, created_at")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute())
+    return res.data or []
+
+
 # ── Sections ──────────────────────────────────────────────────────────────────
 
 async def add_section(

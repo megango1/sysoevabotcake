@@ -9,20 +9,17 @@ load_dotenv()
 
 warnings.filterwarnings("ignore", message=".*per_message=False.*", category=UserWarning)
 
-from telegram import Update, LabeledPrice, InputMediaPhoto, InputMediaVideo
+from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    PreCheckoutQueryHandler,
     ContextTypes,
     filters,
 )
 
-PAYMENTS_TOKEN: str = os.environ.get("PAYMENTS_TOKEN", "")
-PAYMENT_CURRENCY: str = os.environ.get("PAYMENT_CURRENCY", "UAH")
 SUBSCRIPTION_PRICE: int = int(os.environ.get("SUBSCRIPTION_PRICE", "299"))
 SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
@@ -38,6 +35,8 @@ from database import (
     update_section, delete_section, get_all_sections,
     get_users_to_notify, mark_notified,
     save_payment, get_recent_payments,
+    save_payment_request, get_pending_requests,
+    update_payment_request_status, get_all_payment_requests,
 )
 from keyboards import (
     main_menu_keyboard, back_keyboard, payment_keyboard,
@@ -46,6 +45,7 @@ from keyboards import (
     admin_users_keyboard, admin_revoke_users_keyboard, admin_sections_list_keyboard,
     subsections_keyboard, choose_parent_keyboard, skip_keyboard, media_collect_keyboard, cancel_keyboard,
     contact_inline_keyboard, admin_payments_keyboard,
+    i_paid_keyboard, approve_reject_keyboard, pending_requests_keyboard,
 )
 from content import TEXTS, SECTION_LABELS, SECTION_KEYS, CAKE_SUBCATS, CAKE_SUBCAT_KEYS, ALL_SECTION_LABELS
 
@@ -779,147 +779,48 @@ async def del_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── Payments ──────────────────────────────────────────────────────────────────
+# ── Payments — screenshot approval flow ───────────────────────────────────────
 
-async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a Telegram invoice to the user."""
-    if not PAYMENTS_TOKEN:
+async def handle_user_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle photo sent by user as payment proof."""
+    user = update.effective_user
+    if not context.user_data.get("awaiting_screenshot"):
+        return
+    context.user_data.pop("awaiting_screenshot", None)
+
+    has_access = await check_access(user.id)
+    if has_access:
         await update.message.reply_html(
-            TEXTS["payment_info"], reply_markup=payment_keyboard(),
-            protect_content=True,
+            "✅ У тебе вже є активний доступ!", protect_content=True,
         )
         return
-    try:
-        await update.message.reply_invoice(
-            title=f"Підписка на {SUBSCRIPTION_DAYS} днів",
-            description=f"Повний доступ до всіх матеріалів на {SUBSCRIPTION_DAYS} днів",
-            payload=f"sub_{update.effective_user.id}_{SUBSCRIPTION_DAYS}d",
-            provider_token=PAYMENTS_TOKEN,
-            currency=PAYMENT_CURRENCY,
-            prices=[LabeledPrice(f"Підписка {SUBSCRIPTION_DAYS} днів", SUBSCRIPTION_PRICE * 100)],
-            start_parameter="subscribe",
-            photo_url=None,
-            need_name=False,
-            need_phone_number=False,
-            need_email=True,
-            send_email_to_provider=False,
-            protect_content=True,
-        )
-    except Exception as exc:
-        logger.error("send_invoice failed: %s", exc)
-        err_text = str(exc)
-        hint = ""
-        if "CURRENCY_TOTAL_AMOUNT_INVALID" in err_text or "currency" in err_text.lower():
-            hint = (
-                "\n\n⚠️ <b>Підказка для тестового режиму:</b>\n"
-                "Тестовий токен BotFather підтримує лише <b>USD</b>.\n"
-                "Встанови у .env:\n"
-                "<code>PAYMENT_CURRENCY=USD\nSUBSCRIPTION_PRICE=1</code>"
-            )
-        await update.message.reply_html(
-            f"❌ Не вдалось створити рахунок.\n<code>{html.escape(err_text[:200])}</code>{hint}",
-            protect_content=True,
-        )
 
+    file_id = update.message.photo[-1].file_id
+    await save_payment_request(user.id, user.username, user.full_name, file_id)
 
-async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Confirm the payment before Telegram processes it (must reply within 10 sec)."""
-    query = update.pre_checkout_query
-    await query.answer(ok=True)
-
-
-async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Grant access automatically after successful payment and issue fiscal receipt."""
-    user = update.effective_user
-    payment = update.message.successful_payment
-    await grant_access(user.id, days=SUBSCRIPTION_DAYS)
-    amount_uah = payment.total_amount / 100
-    logger.info(
-        "Payment from user %s: %s %s",
-        user.id,
-        amount_uah,
-        payment.currency,
-    )
     await update.message.reply_html(
-        f"✅ <b>Оплата отримана!</b>\n\n"
-        f"Доступ відкрито на <b>{SUBSCRIPTION_DAYS} днів</b>.\n"
-        f"Дякуємо за підтримку! 🎉",
-        reply_markup=main_menu_keyboard(True),
-        protect_content=True,
+        TEXTS["payment_request_sent"], protect_content=True,
     )
-    email = (
-        payment.order_info.email
-        if payment.order_info and payment.order_info.email
-        else None
-    )
-    try:
-        await save_payment(
-            user_id=user.id,
-            full_name=user.full_name,
-            username=user.username,
-            amount_uah=amount_uah,
-            currency=payment.currency,
-            email=email,
-            days=SUBSCRIPTION_DAYS,
-        )
-    except Exception as exc:
-        logger.error("Failed to save payment record: %s", exc)
 
-    name_display = html.escape(user.full_name or user.username or str(user.id))
-    username_display = f" (@{html.escape(user.username)})" if user.username else ""
-    email_display = html.escape(email) if email else "не вказано"
-    notify_text = (
-        f"💰 <b>Нова оплата!</b>\n\n"
-        f"👤 {name_display}{username_display}\n"
+    name = html.escape(user.full_name or user.username or str(user.id))
+    uname = f" (@{html.escape(user.username)})" if user.username else ""
+    caption = (
+        f"💳 <b>Новий запит на оплату</b>\n\n"
+        f"👤 {name}{uname}\n"
         f"🆔 <code>{user.id}</code>\n"
-        f"💳 <b>{amount_uah:.2f} {payment.currency}</b>\n"
-        f"📅 Підписка на {SUBSCRIPTION_DAYS} днів\n"
-        f"📧 Email: {email_display}"
+        f"📅 Підписка на {SUBSCRIPTION_DAYS} днів ({SUBSCRIPTION_PRICE} грн)"
     )
     for admin_id in ADMIN_IDS:
         try:
-            await context.bot.send_message(chat_id=admin_id, text=notify_text, parse_mode="HTML")
+            await context.bot.send_photo(
+                chat_id=admin_id,
+                photo=file_id,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=approve_reject_keyboard(user.id),
+            )
         except Exception as exc:
-            logger.warning("Could not notify admin %s: %s", admin_id, exc)
-
-    if email:
-        description = f"Підписка на {SUBSCRIPTION_DAYS} днів"
-        receipt_ok, receipt_err = await checkbox_issue_receipt(email, amount_uah, description)
-        if receipt_ok:
-            await update.message.reply_html(
-                f"🧾 Фіскальний чек надіслано на <b>{html.escape(email)}</b>.",
-                protect_content=True,
-            )
-        else:
-            logger.warning("Checkbox receipt failed for user %s email %s: %s", user.id, email, receipt_err)
-            err_admin_text = (
-                f"⚠️ <b>Checkbox: чек не видано!</b>\n"
-                f"👤 <code>{user.id}</code> ({html.escape(user.full_name or '')})\n"
-                f"📧 {html.escape(email)}\n"
-                f"💳 {amount_uah:.2f} {payment.currency}\n"
-                f"❌ Помилка: <code>{html.escape(receipt_err[:300])}</code>"
-            )
-            for admin_id in ADMIN_IDS:
-                try:
-                    await context.bot.send_message(chat_id=admin_id, text=err_admin_text, parse_mode="HTML")
-                except Exception:
-                    pass
-    else:
-        logger.warning("No email from user %s — Checkbox receipt skipped", user.id)
-        for admin_id in ADMIN_IDS:
-            try:
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=(
-                        f"⚠️ <b>Checkbox: email не отримано!</b>\n"
-                        f"👤 <code>{user.id}</code> ({html.escape(user.full_name or '')})\n"
-                        f"💳 {amount_uah:.2f} {payment.currency}\n"
-                        f"Чек не видано — користувач не вказав email при оплаті."
-                    ),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
+            logger.error("Failed to forward payment request to admin %s: %s", admin_id, exc)
 
 
 # ── Text messages ─────────────────────────────────────────────────────────────
@@ -932,7 +833,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not has_access:
         if text == "💳 Оплатити підписку":
-            await send_invoice(update, context)
+            await update.message.reply_html(
+                TEXTS["pay_now"],
+                reply_markup=i_paid_keyboard(),
+                protect_content=True,
+            )
         elif text == "💰 Вартість":
             await update.message.reply_html(TEXTS["price_info"], protect_content=True)
         else:
@@ -1046,7 +951,101 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "pay_now":
         await query.edit_message_text(
-            TEXTS["pay_now"], parse_mode="HTML", reply_markup=back_keyboard("back_pay")
+            TEXTS["pay_now"], parse_mode="HTML", reply_markup=i_paid_keyboard()
+        )
+        return
+    if data == "i_paid":
+        context.user_data["awaiting_screenshot"] = True
+        await query.edit_message_text(
+            TEXTS["awaiting_screenshot"], parse_mode="HTML",
+        )
+        return
+    if data.startswith("approve_pay_"):
+        if user.id not in ADMIN_IDS:
+            await query.answer("⛔ Немає доступу", show_alert=True)
+            return
+        target_id = int(data[len("approve_pay_"):])
+        await update_payment_request_status(target_id, "approved")
+        await grant_access(target_id, days=SUBSCRIPTION_DAYS)
+        try:
+            if query.message.photo:
+                orig_caption = query.message.caption or ""
+                await query.edit_message_caption(
+                    caption=orig_caption + "\n\n✅ <b>ОДОБРЕНО</b>",
+                    parse_mode="HTML",
+                )
+            else:
+                await query.edit_message_text(
+                    f"✅ Доступ надано користувачу <code>{target_id}</code>.\n\n"
+                    f"📋 <a href='tg://user?id={target_id}'>Відкрити чат</a>",
+                    parse_mode="HTML",
+                    reply_markup=back_keyboard("admin_pay_requests"),
+                )
+        except Exception:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=TEXTS["payment_approved"],
+                parse_mode="HTML",
+                reply_markup=main_menu_keyboard(True),
+            )
+        except Exception as exc:
+            logger.warning("Could not notify user %s about approval: %s", target_id, exc)
+        await query.answer("✅ Доступ надано!")
+        return
+    if data.startswith("reject_pay_"):
+        if user.id not in ADMIN_IDS:
+            await query.answer("⛔ Немає доступу", show_alert=True)
+            return
+        target_id = int(data[len("reject_pay_"):])
+        await update_payment_request_status(target_id, "rejected")
+        try:
+            if query.message.photo:
+                orig_caption = query.message.caption or ""
+                await query.edit_message_caption(
+                    caption=orig_caption + "\n\n❌ <b>ВІДХИЛЕНО</b>",
+                    parse_mode="HTML",
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ Запит <code>{target_id}</code> відхилено.",
+                    parse_mode="HTML",
+                    reply_markup=back_keyboard("admin_pay_requests"),
+                )
+        except Exception:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=TEXTS["payment_rejected"],
+                parse_mode="HTML",
+                reply_markup=payment_keyboard(),
+            )
+        except Exception as exc:
+            logger.warning("Could not notify user %s about rejection: %s", target_id, exc)
+        await query.answer("❌ Відхилено")
+        return
+    if data == "admin_pay_requests":
+        if user.id not in ADMIN_IDS:
+            return
+        requests = await get_pending_requests()
+        if not requests:
+            await query.edit_message_text(
+                "📋 <b>Запити на оплату</b>\n\n✅ Активних запитів немає.",
+                parse_mode="HTML",
+                reply_markup=back_keyboard("admin_back"),
+            )
+            return
+        lines = [f"📋 <b>Очікують підтвердження: {len(requests)}</b>\n"]
+        for r in requests:
+            name = html.escape(r.get("full_name") or r.get("username") or str(r["user_id"]))
+            uname = f" (@{html.escape(r['username'])})" if r.get("username") else ""
+            lines.append(f"• {name}{uname} — <code>{r['user_id']}</code>")
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=pending_requests_keyboard(requests),
         )
         return
     if data == "access_info":
@@ -1465,13 +1464,17 @@ def main():
     app.add_handler(CommandHandler("test_checkbox", test_checkbox_command))
     app.add_handler(CommandHandler("list", list_sections))
     app.add_handler(CommandHandler("del", del_section))
-    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.User(list(ADMIN_IDS)),
             handle_admin_input,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO & ~filters.User(list(ADMIN_IDS)),
+            handle_user_photo,
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

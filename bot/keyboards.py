@@ -61,6 +61,37 @@ def payment_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def i_paid_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✅ Я оплатив — надіслати скріншот", callback_data="i_paid")]]
+    )
+
+
+def approve_reject_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Одобрити", callback_data=f"approve_pay_{user_id}"),
+                InlineKeyboardButton("❌ Відхилити", callback_data=f"reject_pay_{user_id}"),
+            ]
+        ]
+    )
+
+
+def pending_requests_keyboard(requests: list[dict]) -> InlineKeyboardMarkup:
+    buttons = []
+    for r in requests:
+        name = r.get("full_name") or r.get("username") or str(r["user_id"])
+        name = name[:18]
+        uid = r["user_id"]
+        buttons.append([
+            InlineKeyboardButton(f"✅ {name}", callback_data=f"approve_pay_{uid}"),
+            InlineKeyboardButton("❌", callback_data=f"reject_pay_{uid}"),
+        ])
+    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_back")])
+    return InlineKeyboardMarkup(buttons)
+
+
 def subsections_keyboard(subsections: list[dict], parent_key: str) -> InlineKeyboardMarkup:
     buttons = []
     for s in subsections:
@@ -97,7 +128,8 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📂 Підрозділи", callback_data="admin_subsections_menu")],
             [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
             [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-            [InlineKeyboardButton("💰 Платежі", callback_data="admin_payments")],
+            [InlineKeyboardButton("📋 Запити на оплату", callback_data="admin_pay_requests")],
+            [InlineKeyboardButton("💰 Платежі (архів)", callback_data="admin_payments")],
         ]
     )
 
