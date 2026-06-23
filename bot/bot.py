@@ -184,6 +184,113 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /test_checkbox [email] — runs each Checkbox API step and reports results."""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    args = context.args or []
+    test_email = args[0] if args else None
+
+    lines: list[str] = ["🔍 <b>Тест Checkbox API</b>\n"]
+
+    # Config check
+    missing = [v for v, k in [
+        ("CHECKBOX_LOGIN", CHECKBOX_LOGIN),
+        ("CHECKBOX_PASSWORD", CHECKBOX_PASSWORD),
+        ("CHECKBOX_LICENSE_KEY", CHECKBOX_LICENSE_KEY),
+    ] if not k]
+    if missing:
+        lines.append(f"❌ Не заповнені змінні: <code>{', '.join(missing)}</code>")
+        await update.message.reply_html("\n".join(lines))
+        return
+    lines.append(f"✅ Конфіг: всі змінні заповнені")
+    lines.append(f"   LOGIN: <code>{CHECKBOX_LOGIN}</code>")
+    lines.append(f"   KEY:   <code>{CHECKBOX_LICENSE_KEY[:8]}…</code>\n")
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        # Step 1: signin
+        try:
+            r = await client.post(
+                f"{CHECKBOX_API}/cashier/signin",
+                json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+            )
+            if r.status_code == 200:
+                token = r.json().get("access_token", "")
+                lines.append(f"✅ Крок 1 — Вхід касира: OK (токен отримано)")
+            else:
+                lines.append(f"❌ Крок 1 — Вхід касира: {r.status_code}\n<code>{r.text[:300]}</code>")
+                await update.message.reply_html("\n".join(lines))
+                return
+        except Exception as e:
+            lines.append(f"❌ Крок 1 — Вхід касира: помилка мережі\n<code>{e}</code>")
+            await update.message.reply_html("\n".join(lines))
+            return
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Step 2: license key
+        try:
+            r = await client.post(
+                f"{CHECKBOX_API}/cashier/sign-in/license-key",
+                json={"license_key": CHECKBOX_LICENSE_KEY},
+                headers=headers,
+            )
+            if r.status_code in (200, 201):
+                new_token = r.json().get("access_token", "")
+                if new_token:
+                    token = new_token
+                    headers = {"Authorization": f"Bearer {token}"}
+                lines.append(f"✅ Крок 2 — Прив'язка до каси: OK")
+            else:
+                lines.append(f"⚠️ Крок 2 — Прив'язка до каси: {r.status_code}\n<code>{r.text[:300]}</code>")
+        except Exception as e:
+            lines.append(f"❌ Крок 2 — Прив'язка до каси: помилка\n<code>{e}</code>")
+
+        # Step 3: shift
+        try:
+            r = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+            if r.status_code in (200, 201):
+                lines.append(f"✅ Крок 3 — Відкриття зміни: відкрито нову зміну")
+            elif r.status_code == 422:
+                lines.append(f"✅ Крок 3 — Відкриття зміни: зміна вже відкрита (OK)")
+            else:
+                lines.append(f"❌ Крок 3 — Відкриття зміни: {r.status_code}\n<code>{r.text[:300]}</code>")
+                await update.message.reply_html("\n".join(lines))
+                return
+        except Exception as e:
+            lines.append(f"❌ Крок 3 — Відкриття зміни: помилка\n<code>{e}</code>")
+            await update.message.reply_html("\n".join(lines))
+            return
+
+        # Step 4: test receipt (only if email provided)
+        if test_email:
+            try:
+                payload = {
+                    "goods": [{
+                        "good": {"code": "test_001", "name": "Тест підписки", "price": 100},
+                        "quantity": 1000,
+                    }],
+                    "payments": [{"type": "CASHLESS", "value": 100}],
+                    "delivery": {"email": test_email, "phones": []},
+                }
+                r = await client.post(
+                    f"{CHECKBOX_API}/receipts/sell",
+                    json=payload,
+                    headers=headers,
+                )
+                if r.status_code in (200, 201):
+                    lines.append(f"✅ Крок 4 — Тестовий чек: надіслано на <code>{test_email}</code>!")
+                else:
+                    lines.append(f"❌ Крок 4 — Тестовий чек: {r.status_code}\n<code>{r.text[:400]}</code>")
+            except Exception as e:
+                lines.append(f"❌ Крок 4 — Тестовий чек: помилка\n<code>{e}</code>")
+        else:
+            lines.append(f"\n💡 Щоб надіслати тестовий чек:\n/test_checkbox ваш@email.com")
+
+    await update.message.reply_html("\n".join(lines))
+
+
 # ── /add — add subsection (ConversationHandler) ───────────────────────────────
 
 async def add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1227,6 +1334,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myid", myid_command))
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("test_checkbox", test_checkbox_command))
     app.add_handler(CommandHandler("list", list_sections))
     app.add_handler(CommandHandler("del", del_section))
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
