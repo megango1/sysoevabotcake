@@ -29,7 +29,7 @@ SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 CHECKBOX_LOGIN: str = os.environ.get("CHECKBOX_LOGIN", "")
 CHECKBOX_PASSWORD: str = os.environ.get("CHECKBOX_PASSWORD", "")
 CHECKBOX_LICENSE_KEY: str = os.environ.get("CHECKBOX_LICENSE_KEY", "")
-CHECKBOX_API: str = "https://api.checkbox.ua/api/v1"
+CHECKBOX_API: str = "https://api.checkbox.in.ua/api/v1"
 
 from database import (
     init_db, upsert_user, check_access,
@@ -86,7 +86,7 @@ async def checkbox_issue_receipt(email: str, amount_uah: float, description: str
 
             # Step 2: bind to cash register via license key → may return a new token
             lk_resp = await client.post(
-                f"{CHECKBOX_API}/cashier/sign-in/license-key",
+                f"{CHECKBOX_API}/cashier/signin/license-key",
                 json={"license_key": CHECKBOX_LICENSE_KEY},
                 headers=headers,
             )
@@ -232,7 +232,7 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
         # Step 2: license key
         try:
             r = await client.post(
-                f"{CHECKBOX_API}/cashier/sign-in/license-key",
+                f"{CHECKBOX_API}/cashier/signin/license-key",
                 json={"license_key": CHECKBOX_LICENSE_KEY},
                 headers=headers,
             )
