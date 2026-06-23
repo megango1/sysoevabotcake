@@ -319,7 +319,24 @@ async def test_checkbox_command(update: Update, context: ContextTypes.DEFAULT_TY
             if r.status_code in (200, 201):
                 lines.append(f"✅ Зміна: відкрито нову")
             elif r.status_code == 422:
-                lines.append(f"✅ Зміна: вже відкрита (використовуємо існуючу)")
+                # Could be "already open" or "no PRRO" — read the detail
+                try:
+                    detail = r.json()
+                    detail_msg = detail.get("message") or detail.get("detail") or r.text[:200]
+                except Exception:
+                    detail_msg = r.text[:200]
+                # "already open" is OK; anything else is an error
+                low = detail_msg.lower()
+                if any(w in low for w in ("already", "відкрита", "exist", "open")):
+                    lines.append(f"✅ Зміна: вже відкрита (використовуємо існуючу)")
+                else:
+                    lines.append(
+                        f"❌ Зміна: 422 — <code>{detail_msg}</code>\n"
+                        f"💡 Схоже що касир не має зареєстрованого ПРРО.\n"
+                        f"Зайдіть на my.checkbox.in.ua → ПРРО → Додати та прив'яжіть касира."
+                    )
+                    await update.message.reply_html("\n".join(lines))
+                    return
             else:
                 lines.append(f"❌ Зміна: {r.status_code} <code>{r.text[:300]}</code>")
                 await update.message.reply_html("\n".join(lines))
