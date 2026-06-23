@@ -20,8 +20,7 @@ from telegram.ext import (
     filters,
 )
 
-SUBSCRIPTION_PRICE: int = int(os.environ.get("SUBSCRIPTION_PRICE", "299"))
-SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
+from settings import get_price, get_days, set_price
 
 CHECKBOX_LOGIN: str = os.environ.get("CHECKBOX_LOGIN", "")
 CHECKBOX_PASSWORD: str = os.environ.get("CHECKBOX_PASSWORD", "")
@@ -758,6 +757,29 @@ async def list_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_html("\n".join(lines))
 
 
+# ── /setprice — update subscription price ─────────────────────────────────────
+
+async def setprice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_html(
+            f"💰 Поточна ціна: <b>{get_price()} грн</b> / {get_days()} днів\n\n"
+            f"Використання: /setprice <code>389</code>"
+        )
+        return
+    price = int(args[0])
+    if price < 1 or price > 100_000:
+        await update.message.reply_text("❌ Некоректна ціна (від 1 до 100000 грн).")
+        return
+    set_price(price)
+    await update.message.reply_html(
+        f"✅ Ціна оновлена: <b>{price} грн</b>\n"
+        f"Наступні покупці побачать нову ціну одразу."
+    )
+
+
 # ── /del — delete subsection ──────────────────────────────────────────────────
 
 async def del_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -808,7 +830,7 @@ async def handle_user_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💳 <b>Новий запит на оплату</b>\n\n"
         f"👤 {name}{uname}\n"
         f"🆔 <code>{user.id}</code>\n"
-        f"📅 Підписка на {SUBSCRIPTION_DAYS} днів ({SUBSCRIPTION_PRICE} грн)"
+        f"📅 Підписка на {get_days()} днів ({get_price()} грн)"
     )
     for admin_id in ADMIN_IDS:
         try:
@@ -834,7 +856,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access:
         if text == "💳 Оплатити підписку":
             await update.message.reply_html(
-                TEXTS["pay_now"],
+                TEXTS["pay_now"].format(price=get_price(), days=get_days()),
                 reply_markup=i_paid_keyboard(),
                 protect_content=True,
             )
@@ -932,9 +954,9 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Невірний ID. Введіть число.")
         return
     if action == "grant":
-        await grant_access(target_id, days=SUBSCRIPTION_DAYS)
+        await grant_access(target_id, days=get_days())
         await update.message.reply_html(
-            f"✅ Доступ надано <code>{target_id}</code> на {SUBSCRIPTION_DAYS} днів.",
+            f"✅ Доступ надано <code>{target_id}</code> на {get_days()} днів.",
             reply_markup=back_keyboard("admin_users"),
         )
     context.user_data.pop("admin_action", None)
@@ -951,7 +973,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "pay_now":
         await query.edit_message_text(
-            TEXTS["pay_now"], parse_mode="HTML", reply_markup=i_paid_keyboard()
+            TEXTS["pay_now"].format(price=get_price(), days=get_days()),
+            parse_mode="HTML", reply_markup=i_paid_keyboard()
         )
         return
     if data == "i_paid":
@@ -966,7 +989,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_id = int(data[len("approve_pay_"):])
         await update_payment_request_status(target_id, "approved")
-        await grant_access(target_id, days=SUBSCRIPTION_DAYS)
+        await grant_access(target_id, days=get_days())
         try:
             if query.message.photo:
                 orig_caption = query.message.caption or ""
@@ -1197,7 +1220,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "admin_payments":
-        payments = await get_recent_payments(limit=20)
+        payments = await get_recent_payments(limit=50)
         if not payments:
             await query.edit_message_text(
                 "💰 <b>Платежі</b>\n\nПлатежів ще немає.",
@@ -1464,6 +1487,7 @@ def main():
     app.add_handler(CommandHandler("test_checkbox", test_checkbox_command))
     app.add_handler(CommandHandler("list", list_sections))
     app.add_handler(CommandHandler("del", del_section))
+    app.add_handler(CommandHandler("setprice", setprice_command))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
