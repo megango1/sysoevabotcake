@@ -130,21 +130,26 @@ async def _checkbox_get_token_and_open_shift(client: httpx.AsyncClient) -> str |
     return None
 
 
-async def checkbox_issue_receipt(email: str, amount_uah: float, description: str) -> bool:
+async def checkbox_issue_receipt(email: str, amount_uah: float, description: str) -> tuple[bool, str]:
     """Issue a fiscal receipt via Checkbox and send it to the customer's email.
-    Returns True on success, False if Checkbox is not configured or on error.
+    Returns (True, "") on success, (False, error_message) on failure.
     """
     if not CHECKBOX_LICENSE_KEY and not all([CHECKBOX_LOGIN, CHECKBOX_PASSWORD]):
         logger.info("Checkbox not configured — skipping receipt.")
-        return False
+        return False, "Checkbox не налаштовано"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             token = await _checkbox_get_token_and_open_shift(client)
             if not token:
-                logger.error("Checkbox: could not obtain valid token with open shift.")
-                return False
+                msg = "Не вдалось отримати токен Checkbox (перевірте логін/пароль/ключ)"
+                logger.error("Checkbox: %s", msg)
+                return False, msg
             headers = {"Authorization": f"Bearer {token}"}
             amount_kopecks = int(round(amount_uah * 100))
+            if amount_kopecks <= 0:
+                msg = f"Некоректна сума: {amount_uah} грн → {amount_kopecks} коп."
+                logger.error("Checkbox: %s", msg)
+                return False, msg
             payload = {
                 "goods": [
                     {
@@ -152,6 +157,7 @@ async def checkbox_issue_receipt(email: str, amount_uah: float, description: str
                             "code": "subscription_001",
                             "name": description,
                             "price": amount_kopecks,
+                            "unit_code": "PIECE",
                         },
                         "quantity": 1000,
                     }
@@ -165,16 +171,15 @@ async def checkbox_issue_receipt(email: str, amount_uah: float, description: str
                 headers=headers,
             )
             if receipt_resp.status_code not in (200, 201):
-                logger.error(
-                    "Checkbox receipt failed: %s %s",
-                    receipt_resp.status_code, receipt_resp.text,
-                )
-                return False
+                msg = f"HTTP {receipt_resp.status_code}: {receipt_resp.text[:300]}"
+                logger.error("Checkbox receipt failed: %s", msg)
+                return False, msg
             logger.info("Checkbox receipt issued for %s.", email)
-            return True
+            return True, ""
     except Exception as exc:
-        logger.error("Checkbox API error: %s", exc)
-        return False
+        msg = str(exc)
+        logger.error("Checkbox API error: %s", msg)
+        return False, msg
 
 
 # ConversationHandler states — add flow
@@ -749,21 +754,37 @@ async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             protect_content=True,
         )
         return
-    await update.message.reply_invoice(
-        title=f"Підписка на {SUBSCRIPTION_DAYS} днів",
-        description=f"Повний доступ до всіх матеріалів на {SUBSCRIPTION_DAYS} днів",
-        payload=f"sub_{update.effective_user.id}_{SUBSCRIPTION_DAYS}d",
-        provider_token=PAYMENTS_TOKEN,
-        currency=PAYMENT_CURRENCY,
-        prices=[LabeledPrice(f"Підписка {SUBSCRIPTION_DAYS} днів", SUBSCRIPTION_PRICE * 100)],
-        start_parameter="subscribe",
-        photo_url=None,
-        need_name=False,
-        need_phone_number=False,
-        need_email=True,
-        send_email_to_provider=False,
-        protect_content=True,
-    )
+    try:
+        await update.message.reply_invoice(
+            title=f"Підписка на {SUBSCRIPTION_DAYS} днів",
+            description=f"Повний доступ до всіх матеріалів на {SUBSCRIPTION_DAYS} днів",
+            payload=f"sub_{update.effective_user.id}_{SUBSCRIPTION_DAYS}d",
+            provider_token=PAYMENTS_TOKEN,
+            currency=PAYMENT_CURRENCY,
+            prices=[LabeledPrice(f"Підписка {SUBSCRIPTION_DAYS} днів", SUBSCRIPTION_PRICE * 100)],
+            start_parameter="subscribe",
+            photo_url=None,
+            need_name=False,
+            need_phone_number=False,
+            need_email=True,
+            send_email_to_provider=False,
+            protect_content=True,
+        )
+    except Exception as exc:
+        logger.error("send_invoice failed: %s", exc)
+        err_text = str(exc)
+        hint = ""
+        if "CURRENCY_TOTAL_AMOUNT_INVALID" in err_text or "currency" in err_text.lower():
+            hint = (
+                "\n\n⚠️ <b>Підказка для тестового режиму:</b>\n"
+                "Тестовий токен BotFather підтримує лише <b>USD</b>.\n"
+                "Встанови у .env:\n"
+                "<code>PAYMENT_CURRENCY=USD\nSUBSCRIPTION_PRICE=1</code>"
+            )
+        await update.message.reply_html(
+            f"❌ Не вдалось створити рахунок.\n<code>{html.escape(err_text[:200])}</code>{hint}",
+            protect_content=True,
+        )
 
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -828,14 +849,42 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 
     if email:
         description = f"Підписка на {SUBSCRIPTION_DAYS} днів"
-        receipt_ok = await checkbox_issue_receipt(email, amount_uah, description)
+        receipt_ok, receipt_err = await checkbox_issue_receipt(email, amount_uah, description)
         if receipt_ok:
             await update.message.reply_html(
                 f"🧾 Фіскальний чек надіслано на <b>{html.escape(email)}</b>.",
                 protect_content=True,
             )
         else:
-            logger.warning("Checkbox receipt failed for user %s email %s", user.id, email)
+            logger.warning("Checkbox receipt failed for user %s email %s: %s", user.id, email, receipt_err)
+            err_admin_text = (
+                f"⚠️ <b>Checkbox: чек не видано!</b>\n"
+                f"👤 <code>{user.id}</code> ({html.escape(user.full_name or '')})\n"
+                f"📧 {html.escape(email)}\n"
+                f"💳 {amount_uah:.2f} {payment.currency}\n"
+                f"❌ Помилка: <code>{html.escape(receipt_err[:300])}</code>"
+            )
+            for admin_id in ADMIN_IDS:
+                try:
+                    await context.bot.send_message(chat_id=admin_id, text=err_admin_text, parse_mode="HTML")
+                except Exception:
+                    pass
+    else:
+        logger.warning("No email from user %s — Checkbox receipt skipped", user.id)
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=(
+                        f"⚠️ <b>Checkbox: email не отримано!</b>\n"
+                        f"👤 <code>{user.id}</code> ({html.escape(user.full_name or '')})\n"
+                        f"💳 {amount_uah:.2f} {payment.currency}\n"
+                        f"Чек не видано — користувач не вказав email при оплаті."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
 
 
 # ── Text messages ─────────────────────────────────────────────────────────────
