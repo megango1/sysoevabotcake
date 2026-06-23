@@ -2,6 +2,7 @@ import os
 import html
 import warnings
 import logging
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,6 +26,11 @@ PAYMENT_CURRENCY: str = os.environ.get("PAYMENT_CURRENCY", "UAH")
 SUBSCRIPTION_PRICE: int = int(os.environ.get("SUBSCRIPTION_PRICE", "299"))
 SUBSCRIPTION_DAYS: int = int(os.environ.get("SUBSCRIPTION_DAYS", "30"))
 
+CHECKBOX_LOGIN: str = os.environ.get("CHECKBOX_LOGIN", "")
+CHECKBOX_PASSWORD: str = os.environ.get("CHECKBOX_PASSWORD", "")
+CHECKBOX_LICENSE_KEY: str = os.environ.get("CHECKBOX_LICENSE_KEY", "")
+CHECKBOX_API: str = "https://api.checkbox.ua/api/v1"
+
 from database import (
     init_db, upsert_user, check_access,
     grant_access, revoke_access, get_all_users, get_stats, get_access_until, ADMIN_ID, ADMIN_IDS,
@@ -47,6 +53,76 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+# ── Checkbox fiscalization ─────────────────────────────────────────────────────
+
+async def _checkbox_get_token() -> str:
+    """Login to Checkbox and return JWT access token."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{CHECKBOX_API}/cashier/signin",
+            json={"login": CHECKBOX_LOGIN, "password": CHECKBOX_PASSWORD},
+        )
+        resp.raise_for_status()
+        return resp.json().get("access_token", "")
+
+
+async def _checkbox_ensure_shift(token: str) -> None:
+    """Set license key and open a shift if not already open."""
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(
+            f"{CHECKBOX_API}/cashier/sign-in/license-key",
+            json={"license_key": CHECKBOX_LICENSE_KEY},
+            headers=headers,
+        )
+        shift_resp = await client.post(f"{CHECKBOX_API}/shifts", headers=headers)
+        if shift_resp.status_code not in (200, 201, 422):
+            shift_resp.raise_for_status()
+
+
+async def checkbox_issue_receipt(email: str, amount_uah: float, description: str) -> bool:
+    """Issue a fiscal receipt via Checkbox and send it to the customer's email.
+    Returns True on success, False if Checkbox is not configured or on error.
+    """
+    if not all([CHECKBOX_LOGIN, CHECKBOX_PASSWORD, CHECKBOX_LICENSE_KEY]):
+        logger.info("Checkbox not configured — skipping receipt.")
+        return False
+    try:
+        token = await _checkbox_get_token()
+        if not token:
+            logger.error("Checkbox: failed to obtain token.")
+            return False
+        await _checkbox_ensure_shift(token)
+        amount_kopecks = int(round(amount_uah * 100))
+        payload = {
+            "goods": [
+                {
+                    "good": {
+                        "code": "subscription_001",
+                        "name": description,
+                        "price": amount_kopecks,
+                    },
+                    "quantity": 1000,
+                }
+            ],
+            "payments": [{"type": "CASHLESS", "value": amount_kopecks}],
+            "delivery": {"email": email, "phones": []},
+        }
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                f"{CHECKBOX_API}/receipts/sell",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            resp.raise_for_status()
+            logger.info("Checkbox receipt issued for %s.", email)
+            return True
+    except Exception as exc:
+        logger.error("Checkbox API error: %s", exc)
+        return False
+
 
 # ConversationHandler states — add flow
 ASK_TITLE, ASK_EMOJI, ASK_CONTENT, ASK_PHOTO, ASK_VIDEO = range(5)
@@ -513,7 +589,8 @@ async def send_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_url=None,
         need_name=False,
         need_phone_number=False,
-        need_email=False,
+        need_email=True,
+        send_email_to_provider=False,
         protect_content=True,
     )
 
@@ -525,14 +602,15 @@ async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Grant access automatically after successful payment."""
+    """Grant access automatically after successful payment and issue fiscal receipt."""
     user = update.effective_user
     payment = update.message.successful_payment
     await grant_access(user.id, days=SUBSCRIPTION_DAYS)
+    amount_uah = payment.total_amount / 100
     logger.info(
         "Payment from user %s: %s %s",
         user.id,
-        payment.total_amount / 100,
+        amount_uah,
         payment.currency,
     )
     await update.message.reply_html(
@@ -542,6 +620,21 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
         reply_markup=main_menu_keyboard(True),
         protect_content=True,
     )
+    email = (
+        payment.order_info.email
+        if payment.order_info and payment.order_info.email
+        else None
+    )
+    if email:
+        description = f"Підписка на {SUBSCRIPTION_DAYS} днів"
+        receipt_ok = await checkbox_issue_receipt(email, amount_uah, description)
+        if receipt_ok:
+            await update.message.reply_html(
+                f"🧾 Фіскальний чек надіслано на <b>{html.escape(email)}</b>.",
+                protect_content=True,
+            )
+        else:
+            logger.warning("Checkbox receipt failed for user %s email %s", user.id, email)
 
 
 # ── Text messages ─────────────────────────────────────────────────────────────
@@ -1005,7 +1098,6 @@ def main():
             CallbackQueryHandler(edit_start, pattern="^admin_edit_section$"),
         ],
         per_message=False,
-        allow_reentry=True,
         states={
             EDIT_PICK: [
                 CallbackQueryHandler(edit_picked, pattern="^edit_pick_\\d+$"),
